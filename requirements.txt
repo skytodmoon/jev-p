@@ -1,0 +1,8 @@
+# 推理依赖
+torch>=2.0
+transformers>=4.40
+# 服务依赖
+fastapi>=0.110
+uvicorn>=0.29
+# 开发/测试
+pytest>=8

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jevp"
+version = "0.1.0"
+description = "JevP: System One decision engine (Jev-like) on stock small LLMs via constrained decoding"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "TBD" }
+dependencies = [
+    "torch>=2.0",
+    "transformers>=4.40",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["jevp*"]

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 模型与缓存
+model_cache/
+.hf_cache/
+*.pt
+*.safetensors
+*.bin
+
+# 运行产物与日志
+runs/
+*.log
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp

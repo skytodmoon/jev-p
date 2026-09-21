@@ -1,0 +1,154 @@
+"""约束解码引擎：把"判断"从"文本生成"中剥离。
+
+对齐 Jev 的语义：
+- 输入 state + 一组类型化 questions；
+- 对每个问题构造 prompt，**一批**（batch）全部问题一起前向；
+- 只读取每个样本"末尾位置"的 logits，对候选 token 打分（softmax）；
+- **JSON 由程序拼装**，模型不生成任何自由文本 → 结构上不可能格式错误。
+
+只依赖标准库；tokenizer 以鸭子类型注入（便于离线单测）。
+"""
+from __future__ import annotations
+
+import math
+from typing import Any, Dict, List, Sequence, Tuple
+
+from .protocol import Answer, Question, build_prompt
+
+
+# --------------------------------------------------------------------------- #
+# 打分原语
+# --------------------------------------------------------------------------- #
+def softmax(vals: Sequence[float]) -> List[float]:
+    m = max(vals)
+    exps = [math.exp(v - m) for v in vals]
+    z = sum(exps)
+    return [e / z for e in exps]
+
+
+def candidate_token_ids(tokenizer: Any, texts: Sequence[str]) -> List[List[int]]:
+    """把候选文本转成 token id 序列（首 token 为主）。
+
+    tokenizer 鸭子类型：``tokenizer(text, add_special_tokens=False)["input_ids"]``。
+    """
+    out: List[List[int]] = []
+    for text in texts:
+        ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+        if not ids:
+            raise ValueError(f"候选文本 {text!r} 没有产生任何 token id")
+        out.append([int(t) for t in ids])
+    return out
+
+
+def _resolve_unique_tokens(candidates_ids: Sequence[Sequence[int]]) -> List[int]:
+    """为每个候选选一个唯一 token id：优先首 token，冲突则顺延下一个。
+
+    候选全部冲突（两个 label 的 token 序列完全相同）时抛出错误——
+    此时打分结果无法区分它们，属于协议设计错误。
+    """
+    chosen: List[int] = []
+    used: set = set()
+    for ids in candidates_ids:
+        pick: int | None = None
+        for t in ids:
+            if t not in used:
+                pick = int(t)
+                break
+        if pick is None:
+            raise ValueError(
+                "候选 token 序列完全重合，无法区分。请更换候选标签文本或打分 token 映射。"
+            )
+        used.add(pick)
+        chosen.append(pick)
+    return chosen
+
+
+def score_from_logits(
+    logits_row: Sequence[float],
+    candidates_ids: Sequence[Sequence[int]],
+) -> Tuple[List[int], List[float], float]:
+    """对单个样本的末位 logits 给候选打分。
+
+    返回 (chosen_token_ids, probs, raw_mass)：
+    - chosen_token_ids：每个候选实际使用的 token id；
+    - probs：候选间的 softmax 概率（和为 1）；
+    - raw_mass：候选 token 在**完整词表** softmax 中分到的概率之和。
+      raw_mass 低 = 模型对这个候选集"没底"，即使 confidence 很高也要警惕
+      （实证：vllm-jev-decison 里 confidence 0.9985 而 mass 只有 0.000004）。
+    """
+    chosen = _resolve_unique_tokens(candidates_ids)
+    logits = [float(logits_row[t]) for t in chosen]
+    probs = softmax(logits)
+    # 完整词表 softmax 一次（V 通常 3e4~1.5e5，B 小，可接受）
+    full = softmax(list(logits_row))
+    mass = sum(full[t] for t in chosen)
+    return chosen, probs, mass
+
+
+# --------------------------------------------------------------------------- #
+# 决策引擎
+# --------------------------------------------------------------------------- #
+class DecisionEngine:
+    """底层对象只需提供 ``batch_last_logits(prompts) -> 每样本末位 logits``。"""
+
+    def __init__(self, backend: Any, tokenizer: Any):
+        self.backend = backend
+        self.tokenizer = tokenizer
+
+    # -- public ------------------------------------------------------------ #
+    def decide(self, state: Any, questions: Dict[str, Question]) -> Dict[str, Answer]:
+        """并行评估所有问题（一次 batch 前向），返回 {问题名: Answer}。"""
+        names = list(questions)
+        prompts = [build_prompt(state, n, questions[n]) for n in names]
+        rows = self.backend.batch_last_logits(prompts)  # (B, V)，B == len(questions)
+        if len(rows) != len(names):
+            raise RuntimeError(
+                f"backend 返回 {len(rows)} 行，期望 {len(names)}（每问题一行）"
+            )
+        answers: Dict[str, Answer] = {}
+        for i, name in enumerate(names):
+            answers[name] = self._answer_one(questions[name], list(rows[i]))
+        return answers
+
+    def count_input_tokens(self, prompts: Sequence[str]) -> int:
+        total = 0
+        for p in prompts:
+            total += len(self.tokenizer(p, add_special_tokens=False)["input_ids"])
+        return total
+
+    # -- private ----------------------------------------------------------- #
+    def _score(self, texts: Sequence[str], logits_row: Sequence[float]):
+        ids = candidate_token_ids(self.tokenizer, texts)
+        chosen, probs, mass = score_from_logits(logits_row, ids)
+        return chosen, probs, mass
+
+    def _answer_one(self, q: Question, row: Sequence[float]) -> Answer:
+        if q.type == "noul":
+            # 打分 token 用 Yes/No（比 true/false 更常见）；criteria 描述只用于提示
+            chosen, probs, mass = self._score(["Yes", "No"], row)
+            p_true = probs[0]
+            return Answer("noul", {"noul": round(p_true, 4), "raw_mass": round(mass, 6)})
+
+        if q.type == "choice":
+            labels = list(q.criteria.keys())  # type: ignore[union-attr]
+            chosen, probs, mass = self._score(labels, row)
+            best = max(range(len(probs)), key=lambda i: probs[i])
+            return Answer("choice", {
+                "choice": labels[best],
+                "confidence": round(probs[best], 4),
+                "probabilities": {lbl: round(p, 4) for lbl, p in zip(labels, probs)},
+                "raw_mass": round(mass, 6),
+            })
+
+        # score：候选即档位下标 "0..n-1"，加权求期望分（可落在档位之间）
+        n = len(q.criteria)  # type: ignore[arg-type]
+        chosen, probs, mass = self._score([str(i) for i in range(n)], row)
+        score = sum(i * p for i, p in enumerate(probs))
+        conf = max(probs)
+        return Answer("score", {
+            "score": round(score, 4),
+            "confidence": round(conf, 4),
+            "legend": {str(i): d for i, d in enumerate(q.criteria)},  # type: ignore[union-attr]
+            "probabilities": {str(i): round(p, 4) for i, p in enumerate(probs)},
+            "raw_mass": round(mass, 6),
+        })
