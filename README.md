@@ -131,8 +131,8 @@ JEVP_BACKEND=transformers JEVP_MODEL=Qwen/Qwen2.5-7B-Instruct python examples/de
 面向目标机器跑的基准脚本（在目标机器上执行，本仓库不预跑）：
 
 ```bash
-python benchmarks/benchmark.py                     # 4/8/16/28 字段档位
-python benchmarks/benchmark.py --fields 4,16 --repeat 5
+python benchmarks/benchmark.py                     # 默认 mario 场景（1-1 关卡快决策）
+python benchmarks/benchmark.py --scenario ticket --fields 4,16 --repeat 5
 ```
 
 - **默认模型**：`mlx-community/Qwen2.5-7B-Instruct-4bit`（MLX，Apple Silicon 自动启用）
@@ -144,6 +144,29 @@ python benchmarks/benchmark.py --fields 4,16 --repeat 5
 
 `SKILL.md` 定义了"JevP 决策 Skill"（Claude Code 等 agent 可直接引用）：协议、调用方式、最佳实践与安全提示，见项目根目录。
 
+### 3.7 演示场景：马里奥关卡（Super Mario Bros. 1-1）
+
+把 JevP 用作"快决策层"的端到端演示（思路源自社区项目 [typesafe-mario](https://github.com/fhshaik/typesafe-mario)，用结构化模拟器状态驱动马里奥决策）：
+
+```bash
+python examples/mario_demo.py                      # 合成 1-1 关卡快照 → 动作决策
+python benchmarks/benchmark.py                     # 默认即该场景的延迟基准
+```
+
+**定位（重要）**：马里奥 60fps（16ms/帧）远超任何模型决策速率；System One 模型的正确用法是**剥离低频宏观动作决策（每秒 1~2 次）**，高频精确控制留给确定性代码：
+
+```
+模拟器(60fps) ──采样──▶ 结构化 state ──▶ JevP 决策(每 0.1~0.6s)
+                                              │
+                    ┌─────────────────────────┤
+                    ▼                         ▼
+              动作建议(按钮映射)          确定性代码继续 60fps 执行
+```
+
+每帧 4 个**原子化**问题：`action`（Choice: run/jump/crouch/wait/turn_back）、`obstacle_ahead`（Noul）、`gap_ahead`（Noul）、`danger`（Score 0–2）。示例关卡含 4 帧：开局 → 问号块 → 蘑菇怪逼近 → 坑前；每帧输出推荐动作 + confidence + `raw_mass` + 路由建议与按钮映射（`examples/mario_demo.py`）。
+
+接入真实模拟器（FCEUX Lua / Libretro）只需写一个"采样器"：把内存/画面转成 `benchmarks/scenarios/mario.py` 中同样的结构化字段，即可沿用同一套决策问题集。
+
 ## 4. 包结构与设计
 
 | 模块 | 职责 | 依赖 |
@@ -153,7 +176,9 @@ python benchmarks/benchmark.py --fields 4,16 --repeat 5
 | `jevp/backend.py` | `MLXBackend`（Apple Silicon/7B-4bit 基线）/ `TransformersBackend`（torch）/ `vLLMBackend`（占位）；`auto_backend()` 自动选择 | 惰性导入 |
 | `jevp/calibrator.py` | ECE、温度缩放、置信度路由 | 仅标准库 |
 | `jevp/server.py` | FastAPI `/v1/systemone`、`/healthz` | fastapi + uvicorn |
-| `benchmarks/benchmark.py` | 目标机器延迟/内存基准（默认 Mac mini 4 · 7B） | 仅标准库 |
+| `benchmarks/benchmark.py` | 目标机器延迟/内存基准（默认 **mario 场景**，可选 ticket） | 仅标准库 |
+| `benchmarks/scenarios/` | 场景注册表：`mario`（1-1 关卡）、`ticket`（工单） | 仅标准库 |
+| `examples/mario_demo.py` | 马里奥关卡快决策演示（动作序列 + 按钮映射 + 路由） | 仅标准库 |
 | `SKILL.md` | Agent Skill 封装（协议 + 最佳实践 + 安全提示） | — |
 | `tests/` | 协议/校准/打分引擎单元测试（可离线运行） | unittest |
 
@@ -191,6 +216,7 @@ python benchmarks/benchmark.py --fields 4,16 --repeat 5
 - [ ] 中文校准语料与验证
 - [ ] 选项顺序扰动（Permutation-KL 的对拍测试，缓解顺序偏置）
 - [ ] `raw_mass` 低值告警的接入示例
+- [ ] **马里奥场景接入真实模拟器**（FCEUX Lua / Libretro 采样器 → JevP → 按钮执行）
 - [ ] 在 Mac mini 4（16GB）上跑通基准并回填实测数字（替换本节参考值）
 
 ## 8. 参考
@@ -200,5 +226,6 @@ python benchmarks/benchmark.py --fields 4,16 --repeat 5
 - jev-on-a-laptop（并行约束解码实测）：https://github.com/rorshopping/jev-on-a-laptop
 - vllm-jev-decison（logprobs 路线与坑）：https://github.com/siliconkernel/vllm-jev-decison
 - openJev-verdict-2.0（训练路线可对标）：https://github.com/Heman10x-NGU/openJev-verdict-2.0
+- typesafe-mario（Jev 打马里奥的社区实现）：https://github.com/fhshaik/typesafe-mario
 
 License：[Apache-2.0](LICENSE)（含 [NOTICE](NOTICE) 致谢参考项目）。模型权重如将来发布，将单独约定许可（参考 Qwen 的"代码与权重分许可"做法）。
