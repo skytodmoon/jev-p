@@ -74,8 +74,8 @@ answers = resp.json()["answers"]
 ## 维护
 
 引擎启动：`python -m jevp.server`
-- 默认测试基线：**7B × Mac mini 4（16GB）**——Apple Silicon 上自动用
-  `mlx-community/Qwen2.5-7B-Instruct-4bit`（MLX 后端），其他平台回退
-  `Qwen/Qwen2.5-7B-Instruct`（transformers）。
-- 覆盖：`JEVP_BACKEND=mlx|transformers|auto`、`JEVP_MODEL=...`。
+- 默认测试基线：**7B × Mac mini 4（16GB）**，模型用 **Ollama** 管理：
+  `brew install ollama && ollama pull qwen2.5:7b`，然后 `python -m jevp.server`
+  （auto 后端自动优先 Ollama；无 Ollama 时 Apple Silicon 用 MLX，其他平台用 transformers）。
+- 覆盖：`JEVP_BACKEND=ollama|mlx|transformers|auto`、`JEVP_OLLAMA_MODEL` / `JEVP_MODEL`。
 - 基准测试：`python benchmarks/benchmark.py`（延迟 + 内存 + schema 有效性）。

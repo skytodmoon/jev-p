@@ -1,50 +1,164 @@
-"""模型后端：把 prompt 列表变成"每样本末尾位置的 logits"（B, V）。
+"""模型后端：把 prompt 列表变成"每样本末尾位置的打分"。
 
-默认测试基线：**7B 模型 × Mac mini 4（M4 / 16GB）**。
+默认测试基线：**7B 模型 × Mac mini 4（M4 / 16GB）**，模型用 **Ollama** 下载与管理。
 
-- MLXBackend（Apple Silicon 首选）：mlx-lm 加载 4bit 量化模型
-  （默认 ``mlx-community/Qwen2.5-7B-Instruct-4bit``），单次前向取末位 logits，
-  不调用生成流程。首版为逐条前向（正确性优先，无 padding 复杂度）。
-- TransformersBackend（通用回退）：torch + transformers，单次前向取末位 logits。
-- vLLMBackend：占位（raw_logprobs 路线，见 README Roadmap）。
+后端（auto_backend 自动选择，优先级从上到下）：
+1. OllamaBackend（本机 Ollama 服务可用时默认）：``ollama pull qwen2.5:7b`` 后
+   走 OpenAI 兼容 ``/v1/chat/completions`` 的 ``logprobs``（top-k）做**字符串级候选打分**
+   —— Apple Silicon 上由 Ollama 自动 Metal 加速，模型由 ``ollama`` CLI 管理/更新；
+2. MLXBackend（Apple Silicon、无 Ollama 时）：mlx-lm 直接加载 4bit 量化权重
+   （``mlx-community/Qwen2.5-7B-Instruct-4bit``）；
+3. TransformersBackend（其他平台回退）：torch + transformers。
+4. vLLMBackend：占位（raw_logprobs 路线）。
 
-默认选择逻辑 auto_backend()：
-  Apple Silicon 且可 import mlx_lm -> MLXBackend（推荐）；
-  否则 -> TransformersBackend。
+注：Ollama 的后端只返回 top-k logprob，因此 raw_mass 为 **top-k 近似**；
+MLX/Transformers 后端返回完整词表 logits，raw_mass 为精确份额。
 """
 from __future__ import annotations
 
+import json
 import os
 import platform
-from typing import Any, List, Optional, Sequence
+import urllib.error
+import urllib.request
+from typing import Any, Dict, List, Optional, Sequence
 
 # 默认测试基线：7B
+DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"          # ollama pull qwen2.5:7b
+DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434"
 DEFAULT_TRANSFORMERS_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 DEFAULT_MLX_MODEL = "mlx-community/Qwen2.5-7B-Instruct-4bit"
 
 
 class Backend:
-    model_id = "unknown"
+    """打分后端基类。
 
-    def batch_last_logits(self, prompts: Sequence[str]) -> List[List[float]]:
+    candidate_scoring：
+      "token_id"    —— batch_last_logits 返回 (B, V) 稠密/logits 序列，engine 按 token id 打分
+                         （MLX / Transformers）
+      "token_string"—— batch_last_logits 返回 {token字符串: logprob} 稀疏字典，
+                         engine 按候选 token 字符串（含 BPE 空格变体）打分（Ollama top-k）
+    """
+
+    model_id = "unknown"
+    candidate_scoring = "token_id"
+
+    def batch_last_logits(self, prompts: Sequence[str]) -> List[Any]:
         raise NotImplementedError
 
 
+# --------------------------------------------------------------------------- #
+# Ollama 后端（默认，模型下载/管理走 ollama CLI）
+# --------------------------------------------------------------------------- #
+class _JsonClient:
+    """最小 HTTP JSON 客户端（urllib，无第三方依赖）。"""
+
+    def __init__(self, base_url: str, timeout: float = 60.0):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def _request(self, method: str, path: str, body: Optional[dict] = None) -> Any:
+        url = self.base_url + path
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            raw = resp.read().decode("utf-8")
+        return json.loads(raw) if raw else {}
+
+    def get(self, path: str) -> Any:
+        return self._request("GET", path)
+
+    def post(self, path: str, body: dict) -> Any:
+        return self._request("POST", path, body)
+
+
+class OllamaTokenizer:
+    """Ollama 的远程 tokenizer 适配：engine 只用到 ``tokenizer(text)["input_ids"]``。"""
+
+    def __init__(self, model: str, base_url: str):
+        self._client = _JsonClient(base_url)
+        self.model = model
+
+    def __call__(self, text, add_special_tokens: bool = False) -> Dict[str, Any]:
+        resp = self._client.post("/api/tokenize", {"model": self.model, "content": str(text)})
+        return {"input_ids": [int(t) for t in resp.get("tokens", [])]}
+
+
+class OllamaBackend(Backend):
+    """Ollama 后端：OpenAI 兼容 /v1/chat/completions + logprobs。
+
+    只取 top-k logprob（不生成文本），候选打分在 engine 内按 token 字符串完成。
+    限制：Ollama 不暴露完整词表 logits，原始 raw_mass 是 top-k 近似；
+    候选若未进 top-k，其 logprob 视为 -100（低置信）。
+    """
+
+    candidate_scoring = "token_string"
+
+    def __init__(
+        self,
+        model: str = DEFAULT_OLLAMA_MODEL,
+        base_url: str = DEFAULT_OLLAMA_BASE,
+        num_ctx: int = 2048,
+        top_logprobs: int = 16,
+        timeout: float = 60.0,
+    ):
+        self.model = model
+        self.base_url = base_url
+        self.num_ctx = num_ctx
+        self.top_logprobs = top_logprobs
+        self.model_id = f"ollama:{model}"
+        self._client = _JsonClient(base_url, timeout=timeout)
+        self._ensure_model_installed()
+        self.tokenizer = OllamaTokenizer(model, base_url)
+
+    def _ensure_model_installed(self) -> None:
+        try:
+            tags = self._client.get("/api/tags")
+        except (urllib.error.URLError, OSError) as exc:
+            raise RuntimeError(
+                f"无法连接 Ollama（{self.base_url}）：{exc}。请先安装并启动 Ollama，"
+                f"然后 `ollama pull {self.model}`"
+            ) from exc
+        names = {t.get("name", "") for t in tags.get("models", [])}
+        if self.model not in names:
+            raise RuntimeError(
+                f"Ollama 未安装模型 {self.model!r}，请先执行: ollama pull {self.model}"
+            )
+
+    def batch_last_logits(self, prompts: Sequence[str]) -> List[Dict[str, float]]:
+        rows: List[Dict[str, float]] = []
+        for p in prompts:
+            rows.append(self._top_logprobs(p) or {})
+        return rows
+
+    def _top_logprobs(self, prompt: str) -> Dict[str, float]:
+        body = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1,
+            "logprobs": True,
+            "top_logprobs": self.top_logprobs,
+            "options": {"num_ctx": self.num_ctx},
+        }
+        resp = self._client.post("/v1/chat/completions", body)
+        try:
+            content = resp["choices"][0]["logprobs"]["content"]
+            top = content[0].get("top_logprobs", [])
+        except (KeyError, IndexError, TypeError):
+            return {}
+        return {t["token"]: float(t["logprob"]) for t in top}
+
+
+# --------------------------------------------------------------------------- #
+# MLX / Transformers 本地后端
+# --------------------------------------------------------------------------- #
 def _is_apple_silicon() -> bool:
     return platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64")
 
 
 class MLXBackend(Backend):
-    """Apple Silicon（MLX）后端：本地跑 4bit 量化小模型（推荐 7B）。
-
-    依赖（仅目标机安装）::
-
-        pip install mlx-lm
-
-    惰性导入 mlx / mlx_lm：在非 Apple 平台 import 本模块不会报错。
-    注：首版为逐条前向（每个 prompt 一次 forward），一次 batch 全部问题的
-    并行优化见 README Roadmap（Transformers/vLLM 后端已支持 batch）。
-    """
+    """Apple Silicon（MLX）后端：本地跑 4bit 量化模型（无 Ollama 时的备选）。"""
 
     def __init__(
         self,
@@ -59,7 +173,6 @@ class MLXBackend(Backend):
     def _load(self) -> None:
         import mlx_lm.utils as mlxu
 
-        # 返回 (model, tokenizer)；model 是 mlx 的 ModelForCausalLM
         self.model, self.tokenizer = mlxu.load(self.model_name)
 
     def batch_last_logits(self, prompts: Sequence[str]) -> List[List[float]]:
@@ -71,7 +184,7 @@ class MLXBackend(Backend):
             x = mx.array([ids])
             out = self.model(x)
             if isinstance(out, tuple):
-                out = out[0]  # 某些实现返回 (logits, cache)
+                out = out[0]
             mx.eval(out)
             logits = out[0, -1, :] if out.ndim == 3 else out[-1, :]
             rows.append([float(v) for v in logits.tolist()])
@@ -79,11 +192,11 @@ class MLXBackend(Backend):
 
 
 class TransformersBackend(Backend):
-    """本地 transformers 模型后端（torch，通用平台）。torch/transformers 惰性导入。
+    """torch + transformers 后端（通用平台，batch 一次前向）。"""
 
-    关键细节：batch 内 padding 后，末尾位置是 pad token——
-    必须按 attention_mask 取每个样本真实最后一个 token 的 logits。
-    """
+    @property
+    def candidate_scoring(self) -> str:
+        return "token_id"
 
     def __init__(
         self,
@@ -98,7 +211,7 @@ class TransformersBackend(Backend):
         self._load(device=device, load_in_4bit=load_in_4bit)
 
     def _load(self, device: str, load_in_4bit: bool) -> None:
-        import torch  # noqa: F401（确保 torch 已安装）
+        import torch  # noqa: F401
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
@@ -130,20 +243,13 @@ class TransformersBackend(Backend):
         ).to(self.device)
         with torch.no_grad():
             out = self.model(**enc)
-        # 每个样本真实最后位置（非 pad）
         last_idx = enc["attention_mask"].sum(dim=1) - 1
         rows = out.logits[torch.arange(len(prompts), device=self.device), last_idx]
         return rows.detach().cpu().float().tolist()
 
 
 class vLLMBackend(Backend):
-    """占位：vLLM raw_logprobs 路线。
-
-    工程要点（详见 vllm-jev-decison）：
-    - 候选标签需是 tokenizer 校验过的单 token（A–P 等）；
-    - 读取 ``--logprobs-mode raw_logprobs`` 的候选打分，argmax 选值；
-    - 已知坑：logits 不是校准概率；选项顺序有偏置；state 可被提示注入。
-    """
+    """占位：vLLM raw_logprobs 路线。"""
 
     model_id = "vllm (not implemented)"
 
@@ -153,6 +259,17 @@ class vLLMBackend(Backend):
         )
 
 
+# --------------------------------------------------------------------------- #
+# 自动选择
+# --------------------------------------------------------------------------- #
+def _ollama_available(base_url: str = DEFAULT_OLLAMA_BASE, timeout: float = 1.5) -> bool:
+    try:
+        _JsonClient(base_url, timeout=timeout).get("/api/tags")
+        return True
+    except Exception:
+        return False
+
+
 def auto_backend(
     model: Optional[str] = None,
     backend: str = "auto",
@@ -160,27 +277,42 @@ def auto_backend(
     device: str = "auto",
     load_in_4bit: bool = False,
 ) -> Backend:
-    """按运行环境自动选择后端（默认测试基线：7B × Mac mini 4）。
+    """按运行环境自动选择后端（默认测试基线：7B × Mac mini 4，模型走 Ollama）。
 
-    backend: "auto"（Apple Silicon 且有 mlx-lm -> MLX，否则 transformers）
-             | "mlx" | "transformers" | "vllm"
-    model:   显式模型名；None 时按后端取默认 7B。
+    backend: "auto"（Ollama → MLX → Transformers 依可用性降级）| "ollama" | "mlx"
+             | "transformers" | "vllm"
+    model:   显式模型/Tag；None 时按后端取默认 7B。
     """
-    from .engine import DecisionEngine  # noqa: F401（保持导入习惯一致）
+    if backend == "ollama":
+        return OllamaBackend(model=model or os.environ.get("JEVP_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL))
 
-    mlx = backend == "mlx" or (backend == "auto" and _is_apple_silicon())
-    if mlx:
+    if backend == "auto":
+        # 1) Ollama 可用（默认管理方式）
+        if model is None and _ollama_available():
+            try:
+                return OllamaBackend(
+                    model=os.environ.get("JEVP_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+                )
+            except RuntimeError as exc:
+                print(f"[JevP] Ollama 不可用（{exc}），尝试其他后端…")
+        # 2) Apple Silicon：MLX
+        if _is_apple_silicon():
+            try:
+                import mlx_lm  # noqa: F401
+            except ImportError:
+                pass
+            else:
+                if model is None:
+                    model = os.environ.get("JEVP_MLX_MODEL", DEFAULT_MLX_MODEL)
+                return MLXBackend(model_name=model, max_length=max_length or 2048)
+
+    # 3) transformers（含显式指定）
+    if backend == "mlx":
         if model is None:
             model = os.environ.get("JEVP_MLX_MODEL", DEFAULT_MLX_MODEL)
-        return MLXBackend(
-            model_name=model,
-            max_length=max_length or int(os.environ.get("JEVP_MAX_LENGTH", "2048")),
-        )
-
+        return MLXBackend(model_name=model, max_length=max_length or 2048)
     if backend == "vllm":
         return vLLMBackend()
-
-    # transformers（含 auto 但非 Apple Silicon 的情况）
     if model is None:
         model = os.environ.get("JEVP_MODEL", DEFAULT_TRANSFORMERS_MODEL)
     return TransformersBackend(

@@ -39,16 +39,22 @@ state + questions (Choice/Score/Noul)
 
 ### 3.1 安装
 
-默认测试基线：**7B 模型 × Mac mini 4（M4，16GB）**。
+默认测试基线：**7B 模型 × Mac mini 4（M4，16GB）**，模型用 **Ollama（macOS）** 下载与管理。
 
 ```bash
+# 0) 安装并启动 Ollama（https://ollama.com），拉取 7B 模型
+brew install ollama
+ollama serve          # 或直接装官网 .dmg 后打开
+ollama pull qwen2.5:7b   # 下载/更新/多版本管理都由 ollama CLI 负责
+
+# 1) 安装本项目（推理走 Ollama 的 OpenAI 兼容 logprobs 接口，无需 torch）
 python -m venv .venv
 # Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
-# Apple Silicon 首选（MLX 后端，无需 torch）：
-pip install -e '.[mlx]'
-# 其他平台 / 需要 torch 后端：
-pip install -r requirements.txt
 pip install -e .
+
+# 2)（可选）无 Ollama 时的备选后端：
+#    Apple Silicon → pip install -e '.[mlx]'   （MLX 直接加载 4bit 权重）
+#    其他平台     → pip install -r requirements.txt  （torch + transformers）
 ```
 
 ### 3.2 跑测试（不需要模型、不需要 GPU）
@@ -59,10 +65,10 @@ python -m unittest discover -s tests -v
 
 ### 3.3 起服务（对齐 Jev 的 `/v1/systemone` 形状）
 
-后端与模型默认按机器自动选择：Apple Silicon → MLX（`mlx-community/Qwen2.5-7B-Instruct-4bit`）；其他平台 → transformers（`Qwen/Qwen2.5-7B-Instruct`）。可用环境变量覆盖：`JEVP_BACKEND=mlx|transformers|auto`、`JEVP_MODEL`。
+后端默认自动选择（优先级）：**① 本机 Ollama 服务可用 → Ollama（`qwen2.5:7b`）** → ② Apple Silicon 且装有 mlx-lm → MLX（`mlx-community/Qwen2.5-7B-Instruct-4bit`） → ③ transformers（`Qwen/Qwen2.5-7B-Instruct`）。可用 `JEVP_BACKEND=ollama|mlx|transformers|auto`、`JEVP_OLLAMA_MODEL` / `JEVP_MODEL` 覆盖。
 
 ```bash
-python -m jevp.server        # auto 后端，默认 7B 基线
+python -m jevp.server        # auto：优先走 Ollama（未装模型会提示 ollama pull）
 ```
 
 调用：
@@ -135,10 +141,10 @@ python benchmarks/benchmark.py                     # 默认 mario 场景（1-1 �
 python benchmarks/benchmark.py --scenario ticket --fields 4,16 --repeat 5
 ```
 
-- **默认模型**：`mlx-community/Qwen2.5-7B-Instruct-4bit`（MLX，Apple Silicon 自动启用）
-- **内存预算**：4bit 权重约 4–6GB + KV 缓存；16GB 足够，**建议上下文 ≤ 2048 token**、单批字段数 ≤ 28 以获得平稳延迟
-- **预期性能（参考值）**：社区在 16GB Apple Silicon（M5 Air）实测 Qwen2.5-7B-4bit：28 字段判定 ≈ 1.52s；单决策（3 字段）≈ 611ms/例——M4 mini 预期同量级（参考 [jev-on-a-laptop](https://github.com/rorshopping/jev-on-a-laptop)，非本仓库实测）
-- **注意**：首版 MLX 后端为**逐条前向**（每问题一次 forward）；Transformers/vLLM 后端才支持"一批全进"的单次前向并行评估
+- **默认模型**：`qwen2.5:7b`（**Ollama 管理**：`ollama pull qwen2.5:7b`，Metal 加速、模型更新由 ollama CLI 负责）
+- **内存预算**：Ollama 默认上下文从 2048 起（`num_ctx`），16GB 足够；建议单批字段数 ≤ 28 以获得平稳延迟
+- **预期性能（参考值）**：社区在 16GB Apple Silicon 实测 Qwen2.5-7B-4bit：28 字段判定 ≈ 1.52s；单决策（3 字段）≈ 611ms/例——M4 mini 预期同量级（参考 [jev-on-a-laptop](https://github.com/rorshopping/jev-on-a-laptop)，非本仓库实测）
+- **注意**：Ollama 后端只暴露 top-k logprob，因此 **raw_mass 为 top-k 近似**（MLX/Transformers 后端为完整词表精确值）；Ollama 与 MLX 后端为逐条前向，Transformers 后端为一次 batch 前向
 
 ### 3.6 作为 Agent Skill 使用
 
@@ -173,7 +179,7 @@ python benchmarks/benchmark.py                     # 默认即该场景的延迟
 |---|---|---|
 | `jevp/protocol.py` | Choice/Score/Noul 数据模型、校验、prompt 构建 | 仅标准库 |
 | `jevp/engine.py` | 约束解码：候选 token 打分、softmax、程序化拼装答案 | 仅标准库（tokenizer 鸭子类型注入） |
-| `jevp/backend.py` | `MLXBackend`（Apple Silicon/7B-4bit 基线）/ `TransformersBackend`（torch）/ `vLLMBackend`（占位）；`auto_backend()` 自动选择 | 惰性导入 |
+| `jevp/backend.py` | `OllamaBackend`（**默认**：OpenAI 兼容 logprobs 字符串打分）/ `MLXBackend` / `TransformersBackend` / `vLLMBackend`（占位）；`auto_backend()` 自动选择 | HTTP / 惰性导入 |
 | `jevp/calibrator.py` | ECE、温度缩放、置信度路由 | 仅标准库 |
 | `jevp/server.py` | FastAPI `/v1/systemone`、`/healthz` | fastapi + uvicorn |
 | `benchmarks/benchmark.py` | 目标机器延迟/内存基准（默认 **mario 场景**，可选 ticket） | 仅标准库 |
@@ -190,7 +196,7 @@ python benchmarks/benchmark.py                     # 默认即该场景的延迟
 
 因此 JevP 在两个层面做了防御：
 
-1. **输出 `raw_mass`**：候选 token 在完整词表 softmax 中分到的概率之和。值很低 = 模型"没懂这个问题"，即使 confidence 很高也要当心。
+1. **输出 `raw_mass`**：候选在模型词表概率分布中分到的份额。值很低 = 模型"没懂这个问题"，即使 confidence 很高也要当心（Ollama 后端只暴露 top-k，此为 top-k 近似；本地 MLX/Transformers 后端为完整词表精确值）。
 2. **`calibrator.py` 提供温度缩放 + ECE 评估**：收集 200–500 条带标注样本，学一个温度系数把概率拉回"0.9 就该九成对"，再用 ECE 量化；最后用 `confidence_router()` 做**选择性分类**：高置信自动执行、低置信转人工。
 
 接入生产前请务必在自己数据上做一次校准验证（见 `examples/calibrate_demo.md` 思路）。
@@ -212,6 +218,7 @@ python benchmarks/benchmark.py                     # 默认即该场景的延迟
 
 - [ ] vLLM `logprobs` 后端（复用 vllm-jev-decison 的 raw_logprobs 路线）
 - [ ] **MLX 后端 batch 化**：一次前向评估一批问题（当前为逐条前向），对齐 jev-on-a-laptop 的 KV 广播方案
+- [ ] **Ollama 后端调优**：top_logprobs 档位/候选 token 变体词典（含中文候选）实证，raw_mass 阈值标定
 - [ ] 判别式引擎选项（ModernBERT + GLiClass 布局，openJev 路线，更接近"单前向打分"本质）
 - [ ] 中文校准语料与验证
 - [ ] 选项顺序扰动（Permutation-KL 的对拍测试，缓解顺序偏置）

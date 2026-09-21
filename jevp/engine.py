@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .protocol import Answer, Question, build_prompt
 
@@ -86,6 +86,59 @@ def score_from_logits(
 
 
 # --------------------------------------------------------------------------- #
+# 字符串级打分（Ollama 后端：只暴露 top-k logprob，无完整词表）
+# --------------------------------------------------------------------------- #
+_NEG_LOGPROB = -100.0  # 候选未进 top-k 时的近似 logprob
+
+
+def _string_variants(text: str) -> List[str]:
+    """候选 token 字符串的常见拼写变体（BPE 空格前缀/大小写），保序去重。"""
+    t = text.strip()
+    out = [t, " " + t, t.lower(), " " + t.lower(), t.upper(), " " + t.upper()]
+    seen: set = set()
+    return [x for x in out if not (x in seen or seen.add(x))]
+
+
+def _score_string_logprobs(
+    logprobs_row: Dict[str, float],
+    candidate_variants: Sequence[Sequence[str]],
+) -> Tuple[List[Optional[str]], List[float], float]:
+    """对 top-k logprob 字典给候选打分（Ollama 后端路径）。
+
+    返回 (chosen_token_strings, probs, raw_mass)：
+    - 每个候选取变体中的最大 logprob（未命中 -> _NEG_LOGPROB）；
+    - probs 为候选间 softmax；
+    - raw_mass 为**top-k 近似**：候选在本次返回的 top-k 概率分布中的占比
+      （非完整词表份额；README 已注明该差异）。
+    """
+    chosen_lp: List[float] = []
+    chosen_name: List[Optional[str]] = []
+    for variants in candidate_variants:
+        lp, name = _NEG_LOGPROB, None
+        for v in variants:
+            if v in logprobs_row and logprobs_row[v] > lp:
+                lp = logprobs_row[v]
+                name = v
+        chosen_lp.append(lp)
+        chosen_name.append(name)
+
+    m = max(chosen_lp)
+    exps = [math.exp(x - m) for x in chosen_lp]
+    z = sum(exps)
+    probs = [e / z for e in exps]
+
+    # raw_mass（top-k 近似）：候选占返回 top-k 概率的比例
+    values = list(logprobs_row.values())
+    mass = 0.0
+    if values:
+        am = max(values)
+        total = sum(math.exp(v - am) for v in values)
+        cand_total = sum(math.exp(x - am) for x in chosen_lp if x > _NEG_LOGPROB / 2)
+        mass = cand_total / total if total > 0 else 0.0
+    return chosen_name, probs, mass
+
+
+# --------------------------------------------------------------------------- #
 # 决策引擎
 # --------------------------------------------------------------------------- #
 class DecisionEngine:
@@ -107,7 +160,9 @@ class DecisionEngine:
             )
         answers: Dict[str, Answer] = {}
         for i, name in enumerate(names):
-            answers[name] = self._answer_one(questions[name], list(rows[i]))
+            # 行数据形态由后端契约决定：token_id 路径是序列，
+            # token_string(Ollama) 路径是 {token: logprob} 字典——原样传递
+            answers[name] = self._answer_one(questions[name], rows[i])
         return answers
 
     def count_input_tokens(self, prompts: Sequence[str]) -> int:
@@ -117,7 +172,12 @@ class DecisionEngine:
         return total
 
     # -- private ----------------------------------------------------------- #
-    def _score(self, texts: Sequence[str], logits_row: Sequence[float]):
+    def _score(self, texts: Sequence[str], logits_row: Any):
+        if getattr(self.backend, "candidate_scoring", "token_id") == "token_string":
+            # Ollama 后端：行数据是 {token字符串: logprob} 稀疏字典
+            return _score_string_logprobs(
+                logits_row, [_string_variants(t) for t in texts]
+            )
         ids = candidate_token_ids(self.tokenizer, texts)
         chosen, probs, mass = score_from_logits(logits_row, ids)
         return chosen, probs, mass
