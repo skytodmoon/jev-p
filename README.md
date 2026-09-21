@@ -178,4 +178,4 @@ JEVP_MODEL=Qwen/Qwen2.5-7B-Instruct python examples/demo.py
 - vllm-jev-decison（logprobs 路线与坑）：https://github.com/siliconkernel/vllm-jev-decison
 - openJev-verdict-2.0（训练路线可对标）：https://github.com/Heman10x-NGU/openJev-verdict-2.0
 
-License：待定（初始提交，由仓库所有者决定）。
+License：[Apache-2.0](LICENSE)（含 [NOTICE](NOTICE) 致谢参考项目）。模型权重如将来发布，将单独约定许可（参考 Qwen 的"代码与权重分许可"做法）。
