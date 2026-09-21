@@ -1,8 +1,11 @@
-# 推理依赖
+# ===== 推理依赖（按平台二选一）=====
+# Apple Silicon（Mac mini 4 基线）：不装 torch 也可跑，MLX 后端自动启用
+#   pip install mlx-lm
+# 其他平台 / torch 后端：
 torch>=2.0
 transformers>=4.40
-# 服务依赖
+# ===== 服务依赖 =====
 fastapi>=0.110
 uvicorn>=0.29
-# 开发/测试
+# ===== 开发/测试 =====
 pytest>=8

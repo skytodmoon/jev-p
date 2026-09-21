@@ -22,6 +22,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Apple Silicon 上的默认推理后端（Mac mini 4 基线）
+mlx = ["mlx-lm>=0.16"]
 
 [tool.setuptools.packages.find]
 include = ["jevp*"]

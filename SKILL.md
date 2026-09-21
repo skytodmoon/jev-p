@@ -73,4 +73,9 @@ answers = resp.json()["answers"]
 
 ## 维护
 
-引擎启动：`python -m jevp.server`（默认 `JEVP_MODEL=Qwen/Qwen2.5-1.5B-Instruct`，7B/8B 质量明显更好）。
+引擎启动：`python -m jevp.server`
+- 默认测试基线：**7B × Mac mini 4（16GB）**——Apple Silicon 上自动用
+  `mlx-community/Qwen2.5-7B-Instruct-4bit`（MLX 后端），其他平台回退
+  `Qwen/Qwen2.5-7B-Instruct`（transformers）。
+- 覆盖：`JEVP_BACKEND=mlx|transformers|auto`、`JEVP_MODEL=...`。
+- 基准测试：`python benchmarks/benchmark.py`（延迟 + 内存 + schema 有效性）。

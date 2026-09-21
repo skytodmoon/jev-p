@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 
-from .backend import TransformersBackend
+from .backend import auto_backend
 from .engine import DecisionEngine
 from .protocol import validate_questions
 
@@ -22,16 +22,11 @@ _engine: Optional[DecisionEngine] = None
 def get_engine() -> DecisionEngine:
     global _engine
     if _engine is None:
-        model_name = os.environ.get("JEVP_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
-        device = os.environ.get("JEVP_DEVICE", "auto")
-        max_length = int(os.environ.get("JEVP_MAX_LENGTH", "1024"))
-        backend = TransformersBackend(
-            model_name=model_name,
-            device=device,
-            max_length=max_length,
-        )
+        backend_kind = os.environ.get("JEVP_BACKEND", "auto")  # auto|mlx|transformers
+        model = os.environ.get("JEVP_MODEL")  # 缺省时 auto_backend 取 7B 默认
+        backend = auto_backend(model=model, backend=backend_kind)
         _engine = DecisionEngine(backend=backend, tokenizer=backend.tokenizer)
-        print(f"[JevP] loaded model: {model_name} @ {device}")
+        print(f"[JevP] backend={type(backend).__name__} model={backend.model_id}")
     return _engine
 
 
@@ -55,7 +50,6 @@ def systemone(body: Dict[str, Any]) -> dict:
         raise HTTPException(status_code=422, detail=str(exc))
 
     answers = engine.decide(state, questions)
-    prompts = engine.backend.batch_last_logits  # 触发一次前向（decide 内已调用）
     # 统计输入 token：重新 tokenize prompts 的开销可接受
     from .protocol import build_prompt
 

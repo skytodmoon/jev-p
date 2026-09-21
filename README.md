@@ -39,11 +39,16 @@ state + questions (Choice/Score/Noul)
 
 ### 3.1 安装
 
+默认测试基线：**7B 模型 × Mac mini 4（M4，16GB）**。
+
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
-pip install -r requirements.txt     # 推理需 torch + transformers
-pip install -e .                    # 本项目（协议/校准部分零依赖）
+# Apple Silicon 首选（MLX 后端，无需 torch）：
+pip install -e '.[mlx]'
+# 其他平台 / 需要 torch 后端：
+pip install -r requirements.txt
+pip install -e .
 ```
 
 ### 3.2 跑测试（不需要模型、不需要 GPU）
@@ -54,9 +59,10 @@ python -m unittest discover -s tests -v
 
 ### 3.3 起服务（对齐 Jev 的 `/v1/systemone` 形状）
 
+后端与模型默认按机器自动选择：Apple Silicon → MLX（`mlx-community/Qwen2.5-7B-Instruct-4bit`）；其他平台 → transformers（`Qwen/Qwen2.5-7B-Instruct`）。可用环境变量覆盖：`JEVP_BACKEND=mlx|transformers|auto`、`JEVP_MODEL`。
+
 ```bash
-export JEVP_MODEL=Qwen/Qwen2.5-1.5B-Instruct   # 默认；建议 7B 起步获得可用质量
-python -m jevp.server
+python -m jevp.server        # auto 后端，默认 7B 基线
 ```
 
 调用：
@@ -116,11 +122,25 @@ curl -s http://127.0.0.1:8000/v1/systemone \
 ### 3.4 单文件 demo（本地模型推理）
 
 ```bash
-python examples/demo.py                      # 默认 Qwen2.5-1.5B-Instruct，CPU 可跑
-JEVP_MODEL=Qwen/Qwen2.5-7B-Instruct python examples/demo.py
+python examples/demo.py                      # auto 后端，默认 7B 基线
+JEVP_BACKEND=transformers JEVP_MODEL=Qwen/Qwen2.5-7B-Instruct python examples/demo.py
 ```
 
-### 3.5 作为 Agent Skill 使用
+### 3.5 测试基线：Mac mini 4（M4 · 16GB）· 7B
+
+面向目标机器跑的基准脚本（在目标机器上执行，本仓库不预跑）：
+
+```bash
+python benchmarks/benchmark.py                     # 4/8/16/28 字段档位
+python benchmarks/benchmark.py --fields 4,16 --repeat 5
+```
+
+- **默认模型**：`mlx-community/Qwen2.5-7B-Instruct-4bit`（MLX，Apple Silicon 自动启用）
+- **内存预算**：4bit 权重约 4–6GB + KV 缓存；16GB 足够，**建议上下文 ≤ 2048 token**、单批字段数 ≤ 28 以获得平稳延迟
+- **预期性能（参考值）**：社区在 16GB Apple Silicon（M5 Air）实测 Qwen2.5-7B-4bit：28 字段判定 ≈ 1.52s；单决策（3 字段）≈ 611ms/例——M4 mini 预期同量级（参考 [jev-on-a-laptop](https://github.com/rorshopping/jev-on-a-laptop)，非本仓库实测）
+- **注意**：首版 MLX 后端为**逐条前向**（每问题一次 forward）；Transformers/vLLM 后端才支持"一批全进"的单次前向并行评估
+
+### 3.6 作为 Agent Skill 使用
 
 `SKILL.md` 定义了"JevP 决策 Skill"（Claude Code 等 agent 可直接引用）：协议、调用方式、最佳实践与安全提示，见项目根目录。
 
@@ -130,9 +150,10 @@ JEVP_MODEL=Qwen/Qwen2.5-7B-Instruct python examples/demo.py
 |---|---|---|
 | `jevp/protocol.py` | Choice/Score/Noul 数据模型、校验、prompt 构建 | 仅标准库 |
 | `jevp/engine.py` | 约束解码：候选 token 打分、softmax、程序化拼装答案 | 仅标准库（tokenizer 鸭子类型注入） |
-| `jevp/backend.py` | `TransformersBackend`（本地模型，单次前向取末位 logits） | torch + transformers（惰性导入） |
+| `jevp/backend.py` | `MLXBackend`（Apple Silicon/7B-4bit 基线）/ `TransformersBackend`（torch）/ `vLLMBackend`（占位）；`auto_backend()` 自动选择 | 惰性导入 |
 | `jevp/calibrator.py` | ECE、温度缩放、置信度路由 | 仅标准库 |
 | `jevp/server.py` | FastAPI `/v1/systemone`、`/healthz` | fastapi + uvicorn |
+| `benchmarks/benchmark.py` | 目标机器延迟/内存基准（默认 Mac mini 4 · 7B） | 仅标准库 |
 | `SKILL.md` | Agent Skill 封装（协议 + 最佳实践 + 安全提示） | — |
 | `tests/` | 协议/校准/打分引擎单元测试（可离线运行） | unittest |
 
@@ -165,10 +186,12 @@ JEVP_MODEL=Qwen/Qwen2.5-7B-Instruct python examples/demo.py
 ## 7. Roadmap
 
 - [ ] vLLM `logprobs` 后端（复用 vllm-jev-decison 的 raw_logprobs 路线）
+- [ ] **MLX 后端 batch 化**：一次前向评估一批问题（当前为逐条前向），对齐 jev-on-a-laptop 的 KV 广播方案
 - [ ] 判别式引擎选项（ModernBERT + GLiClass 布局，openJev 路线，更接近"单前向打分"本质）
 - [ ] 中文校准语料与验证
 - [ ] 选项顺序扰动（Permutation-KL 的对拍测试，缓解顺序偏置）
-- [ ] 模型输出 `raw_mass` 阈值告警的接入示例
+- [ ] `raw_mass` 低值告警的接入示例
+- [ ] 在 Mac mini 4（16GB）上跑通基准并回填实测数字（替换本节参考值）
 
 ## 8. 参考
 
