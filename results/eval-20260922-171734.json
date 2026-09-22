@@ -1,0 +1,43 @@
+{
+  "scenarios": {
+    "mario": {
+      "frames": 4,
+      "decisions": 12,
+      "schema_valid": true,
+      "accuracy": 0.75,
+      "consistency": 1.0,
+      "conf_correct_mean": 0.6999,
+      "conf_wrong_mean": 0.4683,
+      "mass_mean": 0.9828,
+      "latency_ms_per_decision": 77.92
+    },
+    "guardrail": {
+      "frames": 6,
+      "decisions": 54,
+      "schema_valid": true,
+      "accuracy": 0.963,
+      "consistency": 0.9444,
+      "conf_correct_mean": 0.9433,
+      "conf_wrong_mean": 0.4956,
+      "mass_mean": 0.9017,
+      "latency_ms_per_decision": 106.28
+    },
+    "ticket": {
+      "frames": 1,
+      "decisions": 9,
+      "schema_valid": true,
+      "accuracy": 0.6667,
+      "consistency": 1.0,
+      "conf_correct_mean": 0.9998,
+      "conf_wrong_mean": 0.8778,
+      "mass_mean": 0.7771,
+      "latency_ms_per_decision": 75.26
+    }
+  },
+  "meta": {
+    "backend": "OpenAICompatibleBackend",
+    "model": "openai:qwen3.8-27b@http://192.168.1.52:8001/v1",
+    "repeat": 3,
+    "note": "金标准为规则标注（可辩解，非学术精确标注）；accuracy 用于趋势评定。"
+  }
+}

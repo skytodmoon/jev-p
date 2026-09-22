@@ -42,3 +42,8 @@ def frames(n_choice: int = 1) -> List[Any]:
 
 def describe(frame: Any, idx: int) -> str:
     return f"工单快照 {idx}"
+
+
+def expected(frame: Any) -> Dict[str, Any]:
+    """固定工单的规则金标准（支付失败三天 -> billing/紧急/不满）。"""
+    return {"dept_0": "billing", "urgent": True, "frustration": 1}

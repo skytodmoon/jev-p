@@ -103,3 +103,15 @@ def describe(frame: Dict[str, Any], idx: int) -> str:
     gap_txt = f"坑@{gap['start']}(宽{gap['width']})" if gap else "无坑"
     return (f"帧{idx:02d}: Mario(x={m['tile_x']:.1f}, vx={m['vx']:.1f}) | "
             f"前方地面={frame['terrain_scan']['ground_ahead']}格 | {gap_txt} | 敌人: {enemies}")
+
+
+def expected(frame: Dict[str, Any]) -> Dict[str, Any]:
+    """可辩解金标准（仅对主决策 action 判分）。
+
+    帧0 顶问号块 -> jump；帧1/2 敌人 2.5~4 格外 -> run；帧3 临坑 -> jump。
+    """
+    exp = {"action": "jump"}
+    idx = frame["frame"]
+    if idx in (1, 2):
+        exp["action"] = "run"
+    return exp
