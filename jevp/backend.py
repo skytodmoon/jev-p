@@ -285,6 +285,33 @@ class _EstimateTokenizer:
         return {"input_ids": list(range(max(1, len(str(text)) // 4 + 1)))}
 
 
+def _resolve_openai_config(model_arg: Optional[str] = None) -> Dict[str, Any]:
+    """解析 openai 后端配置：显式参数 > JEVP_OPENAI_* > VLM_*（标准工作流变量）。
+
+    变量组一（JevP 原生）：JEVP_OPENAI_MODEL / JEVP_OPENAI_BASE_URL / JEVP_OPENAI_API_KEY
+    变量组二（通用标准）：VLM_MODEL_NAME / VLM_BASE_URL / VLM_API_KEY / VLM_PROVIDER=openai
+    """
+    env = os.environ
+    model = model_arg or env.get("JEVP_OPENAI_MODEL") or env.get("VLM_MODEL_NAME")
+    if not model:
+        raise ValueError(
+            "backend=openai 需要模型：--model / JEVP_OPENAI_MODEL / VLM_MODEL_NAME"
+        )
+    base_url = (
+        env.get("JEVP_OPENAI_BASE_URL")
+        or env.get("VLM_BASE_URL")
+        or "http://127.0.0.1:8001/v1"
+    )
+    api_key = env.get("JEVP_OPENAI_API_KEY") or env.get("VLM_API_KEY")
+    top_logprobs = int(env.get("JEVP_OPENAI_TOP_LOGPROBS", "20"))
+    return {
+        "model": model,
+        "base_url": base_url,
+        "api_key": api_key,
+        "top_logprobs": top_logprobs,
+    }
+
+
 class OpenAICompatibleBackend(Backend):
     """OpenAI 兼容服务后端（vLLM 等）：/v1/chat/completions + top-level logprobs。
 
@@ -416,18 +443,13 @@ def auto_backend(
         return OllamaBackend(model=model or os.environ.get("JEVP_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL))
 
     if backend == "openai":
-        # OpenAI 兼容（vLLM 等局域网服务，如 http://192.168.1.52:8001/v1）
-        m = model or os.environ.get("JEVP_OPENAI_MODEL")
-        if not m:
-            raise ValueError("backend=openai 需要指定模型：--model 或环境变量 JEVP_OPENAI_MODEL")
-        return OpenAICompatibleBackend(
-            model=m,
-            base_url=os.environ.get("JEVP_OPENAI_BASE_URL", "http://127.0.0.1:8001/v1"),
-            api_key=os.environ.get("JEVP_OPENAI_API_KEY"),
-            top_logprobs=int(os.environ.get("JEVP_OPENAI_TOP_LOGPROBS", "20")),
-        )
+        cfg = _resolve_openai_config(model)
+        return OpenAICompatibleBackend(**cfg)
 
     if backend == "auto":
+        # 0) 标准工作流变量：VLM_PROVIDER=openai 且给出 base_url -> 直接用
+        if os.environ.get("VLM_PROVIDER") == "openai" and os.environ.get("VLM_BASE_URL"):
+            return OpenAICompatibleBackend(**_resolve_openai_config(model))
         # 1) Ollama 可用（默认管理方式）
         if model is None and _ollama_available():
             try:

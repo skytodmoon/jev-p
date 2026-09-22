@@ -77,5 +77,6 @@ answers = resp.json()["answers"]
 - 默认测试基线：**7B × Mac mini 4（16GB）**，模型用 **Ollama** 管理：
   `brew install ollama && ollama pull qwen2.5:7b`，然后 `python -m jevp.server`
   （auto 后端自动优先 Ollama；无 Ollama 时 Apple Silicon 用 MLX，其他平台用 transformers）。
-- 覆盖：`JEVP_BACKEND=ollama|mlx|transformers|auto`、`JEVP_OLLAMA_MODEL` / `JEVP_MODEL`。
+- 覆盖：`JEVP_BACKEND=ollama|openai|mlx|transformers|auto`；
+  也可用标准工作流变量组直接切换：`VLM_PROVIDER=openai VLM_MODEL_NAME=... VLM_BASE_URL=... VLM_API_KEY=...`（auto 自动识别）。
 - 基准测试：`python benchmarks/benchmark.py`（延迟 + 内存 + schema 有效性）。

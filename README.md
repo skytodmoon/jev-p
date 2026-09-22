@@ -65,15 +65,17 @@ python -m unittest discover -s tests -v
 
 ### 3.3 起服务（对齐 Jev 的 `/v1/systemone` 形状）
 
-后端默认自动选择（优先级）：**① 本机 Ollama 服务可用 → Ollama（`qwen2.5:7b`）** → ② Apple Silicon 且装有 mlx-lm → MLX（`mlx-community/Qwen2.5-7B-Instruct-4bit`） → ③ transformers（`Qwen/Qwen2.5-7B-Instruct`）。
+后端默认自动选择（优先级）：**① 标准工作流变量 `VLM_PROVIDER=openai` 且 `VLM_BASE_URL` 已设置 → OpenAI 兼容后端** → ② 本机 Ollama 服务可用 → Ollama（`qwen2.5:7b`） → ③ Apple Silicon 且装有 mlx-lm → MLX（`mlx-community/Qwen2.5-7B-Instruct-4bit`） → ④ transformers（`Qwen/Qwen2.5-7B-Instruct`）。
 
-另有 **OpenAI 兼容后端（vLLM/SGLang 等，含局域网自建服务）**：`JEVP_BACKEND=openai` + `JEVP_OPENAI_BASE_URL`（如 `http://192.168.1.52:8001/v1`）+ `JEVP_OPENAI_MODEL` +（可选）`JEVP_OPENAI_API_KEY`。对 Qwen3 等带思考链的模型，后端默认带 `chat_template_kwargs={"enable_thinking": false}` 关闭 thinking（确定性打分必需，否则 `max_tokens=1` 会被思考 token 吃掉）。
+**OpenAI 兼容后端（vLLM/SGLang 等，含局域网自建服务）**支持两组等价变量（JevP 原生：`JEVP_OPENAI_MODEL` / `JEVP_OPENAI_BASE_URL` / `JEVP_OPENAI_API_KEY`；通用标准：`VLM_MODEL_NAME` / `VLM_BASE_URL` / `VLM_API_KEY` / `VLM_PROVIDER=openai`）。设置任一组后直接跑即可（auto 自动识别）：
 
 ```bash
-JEVP_BACKEND=openai JEVP_OPENAI_BASE_URL=http://<host>:<port>/v1 \
-  JEVP_OPENAI_MODEL=qwen3.8-27b JEVP_OPENAI_API_KEY=sk-... \
-  python -m jevp.server
+export VLM_PROVIDER=openai VLM_MODEL_NAME=qwen3.8-27b \
+       VLM_BASE_URL=http://<host>:<port>/v1 VLM_API_KEY=sk-...
+python -m jevp.server                    # 或 python examples/mario_demo.py
 ```
+
+对 Qwen3 等带思考链的模型，后端默认带 `chat_template_kwargs={"enable_thinking": false}` 关闭 thinking（确定性打分必需，否则 `max_tokens=1` 会被思考 token 吃掉）。
 
 调用：
 
