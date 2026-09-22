@@ -1,0 +1,21 @@
+{
+  "scenarios": {
+    "mario(1-1 关卡)": {
+      "frames": 4,
+      "fields_per_frame": 4,
+      "median_s_per_frame": 0.3302502750302665,
+      "ms_per_decision": 82.56256875756662,
+      "total_s_all_frames": 1.321001100121066,
+      "schema_valid": true
+    }
+  },
+  "meta": {
+    "scenario": "mario",
+    "backend": "OpenAICompatibleBackend",
+    "model": "openai:qwen3.8-27b@http://192.168.1.52:8001/v1",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "machine": "AMD64",
+    "max_rss_mb": null,
+    "note": "首版 MLX 后端为逐条前向；Transformers 后端为一次 batch 前向。"
+  }
+}

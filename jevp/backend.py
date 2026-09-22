@@ -260,6 +260,135 @@ class vLLMBackend(Backend):
 
 
 # --------------------------------------------------------------------------- #
+# OpenAI 兼容后端（vLLM / SGLang / Xinference 等，局域网自建服务）
+# --------------------------------------------------------------------------- #
+def _ensure_v1(base_url: str) -> str:
+    """确保 base_url 以 /v1 结尾（chat completions 端点路径）。"""
+    base = base_url.rstrip("/")
+    return base if base.endswith("/v1") else base + "/v1"
+
+
+def _parse_openai_logprobs(resp: Any) -> Dict[str, float]:
+    """解析 OpenAI 兼容响应的 top-logprobs -> {token字符串: logprob}。"""
+    try:
+        content = resp["choices"][0]["logprobs"]["content"]
+        top = content[0].get("top_logprobs", [])
+    except (KeyError, IndexError, TypeError):
+        return {}
+    return {t["token"]: float(t["logprob"]) for t in top}
+
+
+class _EstimateTokenizer:
+    """无本地 tokenizer 时的兜底：按字符数估算（输入 token 统计用，非打分）。"""
+
+    def __call__(self, text, add_special_tokens: bool = False) -> Dict[str, Any]:
+        return {"input_ids": list(range(max(1, len(str(text)) // 4 + 1)))}
+
+
+class OpenAICompatibleBackend(Backend):
+    """OpenAI 兼容服务后端（vLLM 等）：/v1/chat/completions + top-level logprobs。
+
+    - 只取 top-k logprob（max_tokens=1，不生成文本），engine 按 token 字符串打分；
+    - 面向 Qwen3 等"带思考链"模型：默认带 ``chat_template_kwargs={"enable_thinking": False}``
+      关闭 thinking（确定性打分任务必需，否则 max_tokens=1 会被思考 token 吃掉）；
+    - raw_mass 为 top-k 近似（同 Ollama 后端，不暴露完整词表）；
+    - API Key 可选（服务无鉴权时留空）。
+
+    配置：JEVP_OPENAI_BASE_URL / JEVP_OPENAI_MODEL / JEVP_OPENAI_API_KEY
+    """
+
+    candidate_scoring = "token_string"
+
+    def __init__(
+        self,
+        model: str,
+        base_url: str,
+        api_key: Optional[str] = None,
+        top_logprobs: int = 20,
+        chat_template_kwargs: Optional[Dict[str, Any]] = None,
+        timeout: float = 120.0,
+    ):
+        self.model = model
+        self.base_url = _ensure_v1(base_url)
+        self.api_key = api_key
+        self.top_logprobs = top_logprobs
+        self.chat_template_kwargs = (
+            chat_template_kwargs
+            if chat_template_kwargs is not None
+            else {"enable_thinking": False}
+        )
+        self.model_id = f"openai:{model}@{self.base_url}"
+        self._client = _JsonClient(self.base_url, timeout=timeout)
+        self.tokenizer = self._make_tokenizer()
+
+    def _make_tokenizer(self) -> Any:
+        # 尝试 vLLM /tokenize；失败退化为估算（仅影响 usage 统计，不影响打分）
+        for path in ("/tokenize", "/v1/tokenize"):
+            try:
+                self._client.post(path, {"model": self.model, "prompt": "hello", "add_special_tokens": False})
+                return _VLLMTokenizer(self._client, self.model)
+            except Exception:
+                continue
+        return _EstimateTokenizer()
+
+    def batch_last_logits(self, prompts: Sequence[str]) -> List[Dict[str, float]]:
+        rows: List[Dict[str, float]] = []
+        for p in prompts:
+            rows.append(self._top_logprobs(p) or {})
+        return rows
+
+    def _top_logprobs(self, prompt: str) -> Dict[str, float]:
+        body: Dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1,
+            "logprobs": True,
+            "top_logprobs": self.top_logprobs,
+            "chat_template_kwargs": self.chat_template_kwargs,
+        }
+        resp = self._post_chat(body)
+        return _parse_openai_logprobs(resp)
+
+    def _post_chat(self, body: Dict[str, Any]) -> Any:
+        import urllib.request
+
+        url = self.base_url + "/chat/completions"
+        data = json.dumps(body).encode()
+        req = urllib.request.Request(url, data=data, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+        try:
+            with urllib.request.urlopen(req, timeout=120.0) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:500]
+            raise RuntimeError(f"OpenAI 兼容服务返回 HTTP {exc.code}: {detail}") from exc
+        return json.loads(raw) if raw else {}
+
+
+class _VLLMTokenizer:
+    """vLLM 的 /tokenize 远程 tokenizer（仅用于输入 token 统计）。"""
+
+    def __init__(self, client: _JsonClient, model: str):
+        self._client = client
+        self.model = model
+
+    def __call__(self, text, add_special_tokens: bool = False) -> Dict[str, Any]:
+        try:
+            resp = self._client.post(
+                "/tokenize",
+                {"model": self.model, "prompt": str(text), "add_special_tokens": add_special_tokens},
+            )
+            tokens = resp.get("tokens") or resp.get("input_ids") or []
+            if tokens:
+                return {"input_ids": [int(t) for t in tokens]}
+        except Exception:
+            pass
+        return _EstimateTokenizer()(text)
+
+
+# --------------------------------------------------------------------------- #
 # 自动选择
 # --------------------------------------------------------------------------- #
 def _ollama_available(base_url: str = DEFAULT_OLLAMA_BASE, timeout: float = 1.5) -> bool:
@@ -285,6 +414,18 @@ def auto_backend(
     """
     if backend == "ollama":
         return OllamaBackend(model=model or os.environ.get("JEVP_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL))
+
+    if backend == "openai":
+        # OpenAI 兼容（vLLM 等局域网服务，如 http://192.168.1.52:8001/v1）
+        m = model or os.environ.get("JEVP_OPENAI_MODEL")
+        if not m:
+            raise ValueError("backend=openai 需要指定模型：--model 或环境变量 JEVP_OPENAI_MODEL")
+        return OpenAICompatibleBackend(
+            model=m,
+            base_url=os.environ.get("JEVP_OPENAI_BASE_URL", "http://127.0.0.1:8001/v1"),
+            api_key=os.environ.get("JEVP_OPENAI_API_KEY"),
+            top_logprobs=int(os.environ.get("JEVP_OPENAI_TOP_LOGPROBS", "20")),
+        )
 
     if backend == "auto":
         # 1) Ollama 可用（默认管理方式）

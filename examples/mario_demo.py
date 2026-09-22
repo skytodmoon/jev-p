@@ -22,6 +22,11 @@ for p in (_ROOT, os.path.join(_ROOT, "benchmarks")):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+# Windows 控制台默认 GBK：强制 UTF-8 输出
+for _s in (sys.stdout, sys.stderr):
+    if _s and hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
+
 from scenarios.mario import ACTION_BUTTONS, build_questions, describe, frames  # noqa: E402
 from jevp.backend import auto_backend  # noqa: E402
 from jevp.engine import DecisionEngine  # noqa: E402

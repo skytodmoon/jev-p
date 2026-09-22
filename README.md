@@ -65,10 +65,14 @@ python -m unittest discover -s tests -v
 
 ### 3.3 起服务（对齐 Jev 的 `/v1/systemone` 形状）
 
-后端默认自动选择（优先级）：**① 本机 Ollama 服务可用 → Ollama（`qwen2.5:7b`）** → ② Apple Silicon 且装有 mlx-lm → MLX（`mlx-community/Qwen2.5-7B-Instruct-4bit`） → ③ transformers（`Qwen/Qwen2.5-7B-Instruct`）。可用 `JEVP_BACKEND=ollama|mlx|transformers|auto`、`JEVP_OLLAMA_MODEL` / `JEVP_MODEL` 覆盖。
+后端默认自动选择（优先级）：**① 本机 Ollama 服务可用 → Ollama（`qwen2.5:7b`）** → ② Apple Silicon 且装有 mlx-lm → MLX（`mlx-community/Qwen2.5-7B-Instruct-4bit`） → ③ transformers（`Qwen/Qwen2.5-7B-Instruct`）。
+
+另有 **OpenAI 兼容后端（vLLM/SGLang 等，含局域网自建服务）**：`JEVP_BACKEND=openai` + `JEVP_OPENAI_BASE_URL`（如 `http://192.168.1.52:8001/v1`）+ `JEVP_OPENAI_MODEL` +（可选）`JEVP_OPENAI_API_KEY`。对 Qwen3 等带思考链的模型，后端默认带 `chat_template_kwargs={"enable_thinking": false}` 关闭 thinking（确定性打分必需，否则 `max_tokens=1` 会被思考 token 吃掉）。
 
 ```bash
-python -m jevp.server        # auto：优先走 Ollama（未装模型会提示 ollama pull）
+JEVP_BACKEND=openai JEVP_OPENAI_BASE_URL=http://<host>:<port>/v1 \
+  JEVP_OPENAI_MODEL=qwen3.8-27b JEVP_OPENAI_API_KEY=sk-... \
+  python -m jevp.server
 ```
 
 调用：
@@ -173,13 +177,33 @@ python benchmarks/benchmark.py                     # 默认即该场景的延迟
 
 接入真实模拟器（FCEUX Lua / Libretro）只需写一个"采样器"：把内存/画面转成 `benchmarks/scenarios/mario.py` 中同样的结构化字段，即可沿用同一套决策问题集。
 
+### 3.8 实测记录：qwen3.8-27b（局域网 OpenAI 兼容服务）× 马里奥关卡
+
+2026-09-22 实测：`JEVP_BACKEND=openai` 连内网 vLLM 服务（`http://192.168.1.52:8001/v1`、`qwen3.8-27b`、`enable_thinking=false`）：
+
+| 帧 | 场景 | 推荐动作 | confidence | raw_mass | danger(0–2) |
+|---|---|---|---|---|---|
+| 0 | 开局，前方问号块 | jump | 0.635 | 0.992 | 0.08 |
+| 1 | 蘑菇怪 4 格外 | run | 0.888 | 0.992 | 0.95 |
+| 2 | 蘑菇怪 2.5 格外 | run | 0.755 | 0.984 | 1.01 |
+| 3 | 坑前（宽 2，地面 1 格） | jump | 0.486 | 0.944 | 1.49 |
+
+**观察**：
+- 决策语义全部合理（顶问号块→跳；敌人 3~4 格外→跑；临坑→跳）；
+- **置信度回落符合预期**：临界/模糊帧 conf 下降到 0.486–0.635 → 被路由规则拦截（不自动执行），正是"快系统 + 置信度路由"的设计行为；
+- **danger 随威胁单调上升**（0.08→0.95→1.01→1.49），是合理的校准代理信号；
+- raw_mass 全部 >0.83：候选均在 top-k 内，无"乱答"迹象；
+- **性能（repeat×3 中位数）**：每决策 **82.6ms**、每帧（4 问）**0.33s** → 每秒约 12 次判断，宏观决策层完全够用。
+
+复现：设上述环境变量后 `python examples/mario_demo.py` / `python benchmarks/benchmark.py`（结果存 `results/bench-*.json`）。
+
 ## 4. 包结构与设计
 
 | 模块 | 职责 | 依赖 |
 |---|---|---|
 | `jevp/protocol.py` | Choice/Score/Noul 数据模型、校验、prompt 构建 | 仅标准库 |
 | `jevp/engine.py` | 约束解码：候选 token 打分、softmax、程序化拼装答案 | 仅标准库（tokenizer 鸭子类型注入） |
-| `jevp/backend.py` | `OllamaBackend`（**默认**：OpenAI 兼容 logprobs 字符串打分）/ `MLXBackend` / `TransformersBackend` / `vLLMBackend`（占位）；`auto_backend()` 自动选择 | HTTP / 惰性导入 |
+| `jevp/backend.py` | `OllamaBackend`（默认）/ `OpenAICompatibleBackend`（vLLM 局域网）/ `MLXBackend` / `TransformersBackend` / `vLLMBackend`（占位）；`auto_backend()` 自动选择 | HTTP / 惰性导入 |
 | `jevp/calibrator.py` | ECE、温度缩放、置信度路由 | 仅标准库 |
 | `jevp/server.py` | FastAPI `/v1/systemone`、`/healthz` | fastapi + uvicorn |
 | `benchmarks/benchmark.py` | 目标机器延迟/内存基准（默认 **mario 场景**，可选 ticket） | 仅标准库 |
@@ -218,7 +242,8 @@ python benchmarks/benchmark.py                     # 默认即该场景的延迟
 
 - [ ] vLLM `logprobs` 后端（复用 vllm-jev-decison 的 raw_logprobs 路线）
 - [ ] **MLX 后端 batch 化**：一次前向评估一批问题（当前为逐条前向），对齐 jev-on-a-laptop 的 KV 广播方案
-- [ ] **Ollama 后端调优**：top_logprobs 档位/候选 token 变体词典（含中文候选）实证，raw_mass 阈值标定
+- [ ] **Ollama/OpenAI 兼容后端调优**：top_logprobs 档位/候选 token 变体词典（含中文候选）实证，raw_mass 阈值标定
+- [ ] 完整词表 logits 路线对比（Ollama/OpenAI 的 top-k 近似 vs MLX/Transformers 精确 raw_mass）
 - [ ] 判别式引擎选项（ModernBERT + GLiClass 布局，openJev 路线，更接近"单前向打分"本质）
 - [ ] 中文校准语料与验证
 - [ ] 选项顺序扰动（Permutation-KL 的对拍测试，缓解顺序偏置）

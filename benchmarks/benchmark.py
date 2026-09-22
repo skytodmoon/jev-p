@@ -22,7 +22,6 @@ import argparse
 import json
 import os
 import platform
-import resource
 import statistics
 import sys
 import time
@@ -33,6 +32,11 @@ _ROOT = os.path.dirname(_THIS_DIR)
 for p in (_ROOT, _THIS_DIR):
     if p not in sys.path:
         sys.path.insert(0, p)
+
+# Windows 控制台默认 GBK：强制 UTF-8 输出（否则 ✅/⚠ 等字符直接崩溃）
+for _s in (sys.stdout, sys.stderr):
+    if _s and hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
 
 from scenarios import load  # noqa: E402
 from jevp.backend import auto_backend  # noqa: E402
@@ -142,6 +146,8 @@ def fn_and_measure(fn) -> float:
 
 def _max_rss_mb() -> float | None:
     if platform.system() in ("Darwin", "Linux"):
+        import resource  # Unix only：惰性导入以兼容 Windows
+
         kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         return kb / 1024.0 if platform.system() == "Linux" else kb / (1024.0 * 1024.0)
     return None
