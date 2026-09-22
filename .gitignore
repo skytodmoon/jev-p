@@ -19,6 +19,7 @@ model_cache/
 
 # 运行产物与日志
 runs/
+results/
 *.log
 .env
 
