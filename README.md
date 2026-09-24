@@ -218,6 +218,35 @@ python benchmarks/benchmark.py                     # 默认即该场景的延迟
 
 **局限**：金标准为规则标注（趋势性数字而非绝对精度）；中文场景未覆盖（模型以英文为主）；mario/guardrail 亦可作为"护栏/快判断"接入点取用（见场景文件）。
 
+### 3.10 Laya（Jev 同赛道开源平替）对比评测
+
+[Laya](https://github.com/NandhaKishorM/laya)（Apache-2.0，21k+ stars）是 Convai Innovations 出品的**判别式 System 1 决策模型**：非自回归、单次前向（官方 T4 33ms、batch 7.2ms/问）、RLCD 训练、3 套 checkpoint（`english` ModernBERT-large 421M / `multilingual` mmBERT-base 322M / `typed-decisions` 421M），由 `Router` 自动语言路由。其 questions 协议与 JevP **完全同构**，因此可直接复用本仓库场景金标准。
+
+**部署**（本仓库已提供开箱支持）：
+```bash
+pip install "laya[serve]"
+python examples/laya_server.py --device cpu --port 8010   # /v1/systemone（JevP 同形状）+ /healthz
+python benchmarks/evaluate_laya.py                         # 三场景对比评测
+```
+
+**实测对比（同一组 questions + 同一规则金标准，2026-09-24）**：
+
+| 场景（语言） | **Laya**（判别式）准确率 | **JevP+qwen3.8-27b**（logits 打分）准确率 | 说明 |
+|---|---|---|---|
+| ticket 工单（英文） | **1.0** | 0.67 | Laya 英文权重在英文任务上更强（判别式语义稳） |
+| mario 马里奥（中文 criteria） | 0.25 | **0.75** | 中文多语言权重是 Laya 短板 |
+| guardrail 工具护栏（中文 criteria） | 0.39 | **0.96** | 同上 |
+| schema 有效 | ✅ 100% | ✅ 100% | 两者同为"程序化拼装/受限输出" |
+| 每决策延迟 | 229–1038ms（本机 CPU；官方 GPU 33ms） | 75–106ms（27B 服务端） | 各自主场不同 |
+
+**评定结论**：
+1. **Laya 是真·Jev 平替，但只在英文/非中文任务上**：英文工单 100% 全对、确定性高（一致性 1.0）、无幻觉（判别式）、部署极简（`pip install laya`）；
+2. **中文是 Laya 的短板**：multilingual（mmBERT-base）对中文 criteria 的判定 0.25–0.39，且 confidence 低到近不可用（~0.05）——**这与 JevP+qwen3.8-27b 恰好互补**（27B 中英文都稳）；
+3. **两者置信度都需谨慎**：Laya 英文 checkpoint 启动时官方自警 "invalid temperatures → confidence uncalibrated"（README 已注明）；JevP 路线同样依赖外挂校准（见 §5）；
+4. **选型建议**：英文密集型决策（票务/审核/护栏，英文语料）→ Laya 开箱即用、成本极低；中文/混合 → JevP+qwen3.8-27b 更稳；两者 questions 协议同构，方案可无缝切换/互为对照。
+
+复现：`python benchmarks/evaluate_laya.py --repeat 3 --device cpu`（首次自动下载 checkpoint，结果存 `results/eval-laya-*.json`）。
+
 ## 4. 包结构与设计
 
 | 模块 | 职责 | 依赖 |
