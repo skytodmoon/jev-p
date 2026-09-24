@@ -45,7 +45,7 @@ def main() -> None:
     )
     print(f"[mario] backend={type(backend).__name__} model={backend.model_id}\n")
 
-    engine = DecisionEngine(backend=backend, tokenizer=backend.tokenizer)
+    engine = DecisionEngine(backend=backend, tokenizer=getattr(backend, "tokenizer", None))
     questions = build_questions()
 
     action_seq = []

@@ -25,7 +25,7 @@ def get_engine() -> DecisionEngine:
         backend_kind = os.environ.get("JEVP_BACKEND", "auto")  # auto|mlx|transformers
         model = os.environ.get("JEVP_MODEL")  # 缺省时 auto_backend 取 7B 默认
         backend = auto_backend(model=model, backend=backend_kind)
-        _engine = DecisionEngine(backend=backend, tokenizer=backend.tokenizer)
+        _engine = DecisionEngine(backend=backend, tokenizer=getattr(backend, "tokenizer", None))
         print(f"[JevP] backend={type(backend).__name__} model={backend.model_id}")
     return _engine
 

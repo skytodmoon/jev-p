@@ -35,7 +35,7 @@ def main() -> None:
     if type(backend).__name__ == "MLXBackend":
         print("[JevP demo] 提示：Apple Silicon 建议先 `pip install -e '.[mlx]'`")
 
-    engine = DecisionEngine(backend=backend, tokenizer=backend.tokenizer)
+    engine = DecisionEngine(backend=backend, tokenizer=getattr(backend, "tokenizer", None))
 
     state = "客户：我上周的订单还没发货，你们到底什么时候处理？我已经等不下去了。"
 

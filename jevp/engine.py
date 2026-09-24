@@ -146,11 +146,19 @@ class DecisionEngine:
 
     def __init__(self, backend: Any, tokenizer: Any):
         self.backend = backend
-        self.tokenizer = tokenizer
+        # 判别式后端（Laya 等）无 tokenizer；非 direct 路径才使用
+        self.tokenizer = getattr(backend, "tokenizer", None) if tokenizer is None else tokenizer
 
     # -- public ------------------------------------------------------------ #
     def decide(self, state: Any, questions: Dict[str, Question]) -> Dict[str, Answer]:
-        """并行评估所有问题（一次 batch 前向），返回 {问题名: Answer}。"""
+        """并行评估所有问题，返回 {问题名: Answer}。
+
+        判别式后端（Laya 等，``backend.direct=True``）非词表打分，走 direct_decide；
+        否则走"构造 prompt -> 一次 batch 前向 -> 候选打分"。
+        """
+        if getattr(self.backend, "direct", False):
+            return self.backend.direct_decide(state, questions)
+
         names = list(questions)
         prompts = [build_prompt(state, n, questions[n]) for n in names]
         rows = self.backend.batch_last_logits(prompts)  # (B, V)，B == len(questions)

@@ -125,6 +125,10 @@ def evaluate_scenario(
     return summary
 
 
+def _fmt(v) -> str:
+    return "n/a" if v is None else str(v)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="JevP 综合评测（默认连本地推理服务）")
     ap.add_argument("--scenarios", default="mario,guardrail,ticket")
@@ -137,7 +141,7 @@ def main() -> None:
 
     names = [s.strip() for s in args.scenarios.split(",") if s.strip()]
     backend = auto_backend(model=args.model, backend=args.backend)
-    engine = DecisionEngine(backend=backend, tokenizer=backend.tokenizer)
+    engine = DecisionEngine(backend=backend, tokenizer=getattr(backend, "tokenizer", None))
     print(f"[eval] backend={type(backend).__name__} model={backend.model_id} "
           f"scenarios={names} repeat={args.repeat}\n")
 
@@ -151,9 +155,9 @@ def main() -> None:
         r = evaluate_scenario(engine, scenario, args.repeat, args.warmup)
         results["scenarios"][name] = r
         print(f"{name:<12}{r['decisions']:>6}{'✅' if r['schema_valid'] else '❌':>7}"
-              f"{r['accuracy']:>9}{r['consistency']:>8}"
-              f"{r['conf_correct_mean']:>9}{r['conf_wrong_mean']:>9}"
-              f"{r['mass_mean']:>8}{r['latency_ms_per_decision']:>9}")
+              f"{_fmt(r['accuracy']):>9}{_fmt(r['consistency']):>8}"
+              f"{_fmt(r['conf_correct_mean']):>9}{_fmt(r['conf_wrong_mean']):>9}"
+              f"{_fmt(r['mass_mean']):>8}{_fmt(r['latency_ms_per_decision']):>9}")
 
     results["meta"] = {
         "backend": type(backend).__name__,

@@ -229,6 +229,19 @@ python examples/laya_server.py --device cpu --port 8010   # /v1/systemone（JevP
 python benchmarks/evaluate_laya.py                         # 三场景对比评测
 ```
 
+**已接入 JevP（判别式后端，P0 落地）**：`LayaBackend` 实现了 `Backend` 的 `direct` 契约，
+`engine.decide` 自动 dispatch，无需新评测管线即可一键切换：
+
+```bash
+JEVP_BACKEND=laya python benchmarks/evaluate.py          # 三场景，Router 自动语言路由
+JEVP_BACKEND=laya python examples/mario_demo.py          # demo / server 同理
+JEVP_BACKEND=laya JEVP_LAYA_MODEL=multilingual python benchmarks/evaluate.py  # 强制多语言权重
+```
+
+统一管线实测（Router auto 路由，CPU）与独立评测一致：**ticket 1.0 / guardrail 0.556 / mario 0.5**
+（auto 会把中文 criteria 场景路由到 english 权重；`evaluate_laya.py` 强制 multilingual 为 0.39/0.25）。
+注：Laya 判别式输出无 `raw_mass` 字段（该信号只属于 LLM logits 路线）。
+
 **实测对比（同一组 questions + 同一规则金标准，2026-09-24）**：
 
 | 场景（语言） | **Laya**（判别式）准确率 | **JevP+qwen3.8-27b**（logits 打分）准确率 | 说明 |

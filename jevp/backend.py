@@ -38,13 +38,21 @@ class Backend:
                          （MLX / Transformers）
       "token_string"—— batch_last_logits 返回 {token字符串: logprob} 稀疏字典，
                          engine 按候选 token 字符串（含 BPE 空格变体）打分（Ollama top-k）
+
+    direct：判别式后端（如 Laya）不产生词表 logits，实现
+            ``direct_decide(state, questions) -> Dict[str, Answer]``；
+            DecisionEngine.decide 检测到 ``direct=True`` 时走该路径。
     """
 
     model_id = "unknown"
     candidate_scoring = "token_id"
+    direct = False
 
     def batch_last_logits(self, prompts: Sequence[str]) -> List[Any]:
         raise NotImplementedError
+
+    def direct_decide(self, state: Any, questions: "Dict[str, Any]") -> "Dict[str, Any]":
+        raise NotImplementedError("该后端不是判别式后端，不支持直接判定")
 
 
 # --------------------------------------------------------------------------- #
@@ -416,8 +424,82 @@ class _VLLMTokenizer:
 
 
 # --------------------------------------------------------------------------- #
+# Laya 后端（Apache-2.0 判别式 System1 决策模型，Jev 开源平替）
+# questions 协议与 JevP 完全同构：直接 router.predict(state, questions) 取答案，
+# 不经过 LLM logits 打分。借鉴其工程实践：一键接入、按 checkpoint 路由。
+# --------------------------------------------------------------------------- #
+def _laya_answer_to_jevp(qtype: str, raw: Dict[str, Any]) -> Any:
+    """把 Laya 单个答案映射为 JevP Answer payload（保持输出契约一致）。"""
+    from .protocol import Answer
+
+    out: Dict[str, Any] = {"type": qtype}
+    if qtype == "choice":
+        out["choice"] = raw.get("choice")
+        out["probabilities"] = raw.get("probabilities") or {}
+        out["confidence"] = raw.get("confidence")
+    elif qtype == "noul":
+        out["noul"] = raw.get("noul")
+        if raw.get("confidence") is not None:
+            out["confidence"] = raw["confidence"]
+    elif qtype == "score":
+        out["score"] = raw.get("score")
+        out["legend"] = raw.get("legend") or {}
+        out["probabilities"] = raw.get("probabilities") or {}
+        out["confidence"] = raw.get("confidence")
+    # Laya 额外字段原样透传（answer_confidence / action 等）
+    for k, v in raw.items():
+        if k not in out:
+            out[k] = v
+    return Answer(qtype, out)
+
+
+class LayaBackend(Backend):
+    """Laya（判别式决策模型）后端：直接输出 typed answers，无 LLM 服务依赖。
+
+    配置：JEVP_LAYA_DEVICE（cpu|cuda|mps，默认 cpu）、JEVP_LAYA_MODEL
+    （auto|english|multilingual|typed-decisions，默认 auto 由 Router 语言检测路由）。
+    router 参数供测试注入；生产环境懒加载 ``laya.Router``（首调才下载/加载 checkpoint）。
+    """
+
+    direct = True
+
+    def __init__(
+        self,
+        device: str = "cpu",
+        model: Optional[str] = None,
+        router: Optional[Any] = None,
+    ):
+        self.device = device
+        self.model = model or "auto"
+        self.model_id = f"laya/{self.model}@{device}"
+        self._router = router
+
+    def _get_router(self) -> Any:
+        if self._router is None:
+            from laya import Router
+
+            self._router = Router(preload=False, device=self.device)
+        return self._router
+
+    def direct_decide(self, state: Any, questions: "Dict[str, Any]") -> "Dict[str, Any]":
+        qdict = {k: q.to_dict() for k, q in questions.items()}
+        # "auto"/None -> 不传 model，由 Router 自动语言检测路由；否则显式指定 checkpoint
+        predict_model = None if self.model in (None, "auto") else self.model
+        result = self._get_router().predict(state, qdict, model=predict_model)
+        answers_raw = result.get("answers", {})
+        answers: Dict[str, Any] = {}
+        for k, q in questions.items():
+            if k not in answers_raw:
+                raise RuntimeError(f"Laya 未返回问题 {k!r} 的答案")
+            answers[k] = _laya_answer_to_jevp(q.type, answers_raw[k])
+        return answers
+
+
+# --------------------------------------------------------------------------- #
 # 自动选择
 # --------------------------------------------------------------------------- #
+def _laya_env_device() -> str:
+    return os.environ.get("JEVP_LAYA_DEVICE", "cpu")
 def _ollama_available(base_url: str = DEFAULT_OLLAMA_BASE, timeout: float = 1.5) -> bool:
     try:
         _JsonClient(base_url, timeout=timeout).get("/api/tags")
@@ -441,6 +523,14 @@ def auto_backend(
     """
     if backend == "ollama":
         return OllamaBackend(model=model or os.environ.get("JEVP_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL))
+
+    if backend == "laya":
+        # Laya 判别式后端（Jev 开源平替）：模型选择 auto|english|multilingual|typed-decisions
+        laya_model = model or os.environ.get("JEVP_LAYA_MODEL")
+        return LayaBackend(
+            device=os.environ.get("JEVP_LAYA_DEVICE", "cpu"),
+            model=laya_model,
+        )
 
     if backend == "openai":
         cfg = _resolve_openai_config(model)
