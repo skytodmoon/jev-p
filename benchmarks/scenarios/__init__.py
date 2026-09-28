@@ -10,12 +10,13 @@
     python benchmarks/benchmark.py --scenario mario
     python benchmarks/benchmark.py --scenario ticket --fields 4,16
 """
-from . import guardrail, mario, ticket
+from . import enterprise_match, guardrail, mario, ticket
 
 SCENARIOS = {
     "mario": mario,
     "guardrail": guardrail,
     "ticket": ticket,
+    "enterprise_match": enterprise_match,
 }
 
 
