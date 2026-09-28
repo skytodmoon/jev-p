@@ -260,6 +260,48 @@ JEVP_BACKEND=laya JEVP_LAYA_MODEL=multilingual python benchmarks/evaluate.py  # 
 
 复现：`python benchmarks/evaluate_laya.py --repeat 3 --device cpu`（首次自动下载 checkpoint，结果存 `results/eval-laya-*.json`）。
 
+### 3.11 AgentJev-0.6B（第三个 System One 实现）部署与评测
+
+[AgentJev](https://github.com/malevrigns/agent-jev)（Apache-2.0，313★）：Qwen3-0.6B 骨干去掉 LM head + 候选头单前向打分，零解码 token、共享前缀缓存、2048 上下文；官方 typed-decisions 自报 **79.25% top-1**（比 Laya +2.25 点、比 Jev +6.5 点）。
+
+**部署（本机实测，CPU；GPU 服务器同流程仅多 `--device cuda:0`）**：
+```bash
+git clone https://github.com/malevrigns/agent-jev.git && cd agent-jev
+pip install -r requirements.txt huggingface_hub safetensors
+# 权重 safetensors -> torch checkpoint + 校准温度
+python -c "from huggingface_hub import hf_hub_download; from safetensors.torch import load_file; import torch; \
+torch.save({'state_dict': load_file(hf_hub_download('aimeigaoshou/agent-jev','model.safetensors'))}, 'agentjev_v1.pt'); \
+hf_hub_download('aimeigaoshou/agent-jev','temperatures.json', local_dir='.')"
+# 首跑需预热 Qwen3-0.6B tokenizer 进 HF 缓存（server 用 local_files_only=True）
+python -c "from huggingface_hub import hf_hub_download as d; \
+[d('Qwen/Qwen3-0.6B', f) for f in ['config.json','tokenizer.json','tokenizer_config.json']]"
+# 启动（GPU 服务器：--device cuda:0）
+python -m jev_service.server --checkpoint agentjev_v1.pt --model-path Qwen/Qwen3-0.6B \
+  --temperatures temperatures.json --port 8149 --device cpu
+```
+验证：`GET /health` 返回 `{status: ready, types: [boolean, choice, score], shared_prefix_compute: true, ...}`。
+
+**业务实测（自带 `run_practical_test.py`，本机 CPU）**：Coding Agent 门控三连全对——拒绝提交（63% 未完成概率）、推荐读失败测试（69.6%，margin 57%）、风险 Level 1；DevOps 事故定级 Level 2 合理。**注：脚本结尾"40–80ms"为硬编码文案，本次 CPU 实测为 4.2–8.4s/决策**（官方 GPU 目标 ~50ms）。
+
+**三场景同题评测（`benchmarks/evaluate_agentjev.py`，与 §3.9/§3.10 同口径）**：
+
+| 场景（语言） | **AgentJev-0.6B** | Laya（判别式） | JevP+qwen3.8-27b |
+|---|---|---|---|
+| ticket（英文） | **1.0** | **1.0** | 0.67 |
+| guardrail（英文命令+中文 criteria） | 0.83 | 0.39 | **0.96** |
+| mario（数值化状态+中文 criteria） | **0.0**¹ | 0.25 | **0.75** |
+| 一致性 | 1.0 | 1.0 | 1.0 |
+| 每决策延迟 | CPU 1.9–5.3s / 官方 GPU ~50ms | CPU 0.23–1.0s / 官方 GPU 33ms | 27B 服务 75–106ms |
+
+¹ **不是评测 bug**：单帧调试显示 AgentJev 对中文 criteria 的马里奥状态返回接近均匀的分布（margin 仅 0.044，run 0.29 / jump 0.24 / crouch 0.25），argmax 随机化——0.6B + typed-decisions 微调的短板是**中文语义与数值化状态**；同样中文 criteria 的 guardrail 因 state 是英文命令（语义强）拿到 0.83。
+
+**要点**：
+1. **三个 System One 实现的强项各不相同**：AgentJev 英文/命令判定强（门控实测全对、ticket 1.0）、0.6B 极轻量；Laya 英文强但中文弱；JevP+27B 中英文最均衡；
+2. **训练语料与任务匹配度比参数量更关键**：guardrail 上 0.6B（0.83）> Laya 322M（0.39）、< 27B（0.96）；
+3. **三者都内置/暴露了校准温度**（AgentJev: `temperatures.json` 自动加载；Laya: checkpoint 温度；JevP: calibrator.py），且都注明"域校准不保证"——**校准仍是 System One 落地的共同最后一公里**。
+
+复现：`AGENTJEV_URL=http://<host>:8149 python benchmarks/evaluate_agentjev.py --repeat 3`。
+
 ## 4. 包结构与设计
 
 | 模块 | 职责 | 依赖 |
