@@ -496,6 +496,111 @@ class LayaBackend(Backend):
 
 
 # --------------------------------------------------------------------------- #
+# AgentJev 后端（Qwen3-0.6B 候选头，判别式 System One，HTTP 服务自包含调用）
+# --------------------------------------------------------------------------- #
+def _jepq_to_agentjev(questions: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """JevP protocol questions -> AgentJev /api/evaluate questions（noul->boolean）。"""
+    type_map = {"noul": "boolean", "choice": "choice", "score": "score"}
+    out: List[Dict[str, Any]] = []
+    for name, q in questions.items():
+        raw = q.to_dict()
+        item: Dict[str, Any] = {"id": name, "type": type_map[q.type],
+                                "question": raw["instructions"]}
+        if q.type == "noul":
+            c = raw.get("criteria") or {}
+            item["criteria"] = {"true": c.get("true", "The statement is true."),
+                                "false": c.get("false", "The statement is false.")}
+        elif q.type == "choice":
+            item["options"] = raw["criteria"]
+        else:
+            item["levels"] = list(raw["criteria"])
+        out.append(item)
+    return out
+
+
+def _agentjev_answer_to_jevp(q: "Any", ans: Dict[str, Any]) -> Any:
+    """AgentJev answer -> JevP Answer（字段对齐 evaluate 管线）。"""
+    from .protocol import Answer
+
+    dist = ans.get("distribution") or {}
+    if q.type == "noul":
+        p = float(dist.get("true", 0.0)) if dist else bool(ans.get("value"))
+        return Answer("noul", {"type": "noul", "noul": round(p, 4),
+                               "confidence": round(max(p, 1.0 - p), 4)})
+    if q.type == "choice":
+        if not dist:
+            raise RuntimeError(f"AgentJev 对 {q.type} 问题未返回 distribution")
+        best = max(dist, key=dist.get)
+        return Answer("choice", {"type": "choice", "choice": best,
+                                 "probabilities": {k: round(v, 4) for k, v in dist.items()},
+                                 "confidence": round(float(dist[best]), 4)})
+    # score
+    score_val = ans.get("score")
+    legend = {str(i): d for i, d in enumerate(q.criteria or [])}  # type: ignore[arg-type]
+    conf = round(max(dist.values()), 4) if dist else None
+    payload: Dict[str, Any] = {"type": "score",
+                               "score": round(float(score_val), 4) if score_val is not None else None,
+                               "legend": legend}
+    if dist:
+        payload["probabilities"] = {str(k): round(v, 4) for k, v in dist.items()}
+    if conf is not None:
+        payload["confidence"] = conf
+    return Answer("score", payload)
+
+
+class AgentJevBackend(Backend):
+    """AgentJev-0.6B（https://github.com/malevrigns/agent-jev）后端。
+
+    通过 /api/evaluate HTTP 调用（自包含实现，不依赖 agent-jev 仓库路径）。
+    端点：参数 > AGENTJEV_URL > http://127.0.0.1:8149。
+    `post` 供测试注入：fn(payload) -> 服务响应 dict。
+    """
+
+    direct = True
+
+    def __init__(
+        self,
+        endpoint: Optional[str] = None,
+        timeout: float = 60.0,
+        post: Optional[Any] = None,
+    ):
+        self.endpoint = (
+            endpoint or os.environ.get("AGENTJEV_URL", "http://127.0.0.1:8149")
+        ).rstrip("/")
+        self.timeout = timeout
+        self.model_id = f"agentjev@{self.endpoint}"
+        self._post = post
+
+    def _call(self, state: Any, ev_questions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        state_str = state if isinstance(state, str) else json.dumps(
+            state, ensure_ascii=False, indent=2)
+        payload = {"state": state_str, "questions": ev_questions}
+        if self._post is not None:
+            return self._post(payload)
+        req = urllib.request.Request(
+            self.endpoint + "/api/evaluate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def direct_decide(self, state: Any, questions: "Dict[str, Any]") -> "Dict[str, Any]":
+        ev_q = _jepq_to_agentjev(questions)
+        data = self._call(state, ev_q)
+        try:
+            answers_raw = {a["id"]: a for a in data["results"][0]["answers"]}
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"AgentJev 响应结构异常: {exc}") from exc
+        answers: Dict[str, Any] = {}
+        for k, q in questions.items():
+            if k not in answers_raw:
+                raise RuntimeError(f"AgentJev 未返回问题 {k!r} 的答案")
+            answers[k] = _agentjev_answer_to_jevp(q, answers_raw[k])
+        return answers
+
+
+# --------------------------------------------------------------------------- #
 # 自动选择
 # --------------------------------------------------------------------------- #
 def _laya_env_device() -> str:
@@ -531,6 +636,10 @@ def auto_backend(
             device=os.environ.get("JEVP_LAYA_DEVICE", "cpu"),
             model=laya_model,
         )
+
+    if backend == "agentjev":
+        # AgentJev-0.6B 判别式后端（端点 AGENTJEV_URL，服务需已启动）
+        return AgentJevBackend()
 
     if backend == "openai":
         cfg = _resolve_openai_config(model)
