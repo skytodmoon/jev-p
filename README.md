@@ -385,6 +385,65 @@ JEVP_BACKEND=router python examples/enterprise_match_demo.py     # 语言感知�
 
 复现：`VLM_*=... python benchmarks/improv_enterprise_blend.py --w 0.7`；`python examples/enterprise_match_demo.py --questions core`。
 
+### 3.15 服务 API 与调试台（明确输入/输出结构）
+
+**启动**（需 VLM_* 环境变量指向 27B 服务）：
+```bash
+python examples/enterprise_api.py          # 端口 8021（JEVP_API_PORT 可改）
+```
+**端点**：
+
+| 端点 | 说明 |
+|---|---|
+| `GET /` | 网页调试台（中/英示例加载、参数、排序表、逐企业明细、原始 JSON） |
+| `POST /api/match` | 批量企业匹配打分 + 排序（核心） |
+| `POST /api/match/one` | 单企业快查（`{"name":..., "basic":{...}, ...}` 直接 POST） |
+| `GET /api/match/example?lang=zh\|en` | 返回内置示例企业列表（调试台填充用） |
+| `GET /api/schema` | 输入/输出结构契约（机器可读） |
+| `GET /healthz` | 健康检查 |
+
+**输入结构**（`POST /api/match`）：
+```json
+{
+  "product":    {"name": "…", "description": "…"},     // 可选，缺省内置 Titan-PHM
+  "companies":  [
+      {"name": "企业名",
+       "basic": {"industry": "主营行业", "scale": "规模", "location": "地区",
+                 "employees": "人数", "since": 成立年},
+       "bidding": [{"year": 2026, "title": "招标/采购标题", "amount": 金额}],
+       "website": {"strategy": "官网战略关键词", "news": "动态"},
+       "supply_chain": {"customers": "客户", "suppliers": "供应商", "leverage": "渠道杠杆"}}],
+  "demo":       "zh" | "en" | null,                    // 快捷加载内置中/英示例
+  "questions":  "core" | "all" | "min",                // 3/6/1 问每家
+  "apply_patch": true,                                  // 域先验硬校正（默认开）
+  "backend":    "auto"(VLM_*→27B) | "router" | "openai" | "laya" | "agentjev"
+}
+```
+
+**输出结构**：
+```json
+{
+  "schema": "enterprise-match.v1", "demo": false,
+  "product": {...}, "questions_used": ["industry_fit", ...],
+  "ranking": [
+      {"name": "企业名", "lang": "zh|en",
+       "match_score": 2.97,      // 校正后匹配分 0-3（可排序）
+       "score_raw": 2.97,        // 原始分（未校正）
+       "patched": false, "patch_note": "",
+       "confidence": 0.98, "margin": 0.96,
+       "advice": "🔥 优先触达",   // 🔥/→/◇/✋ 触达建议
+       "per_question": {"industry_fit": {...}, "match_score": {...}, ...}}],
+  "meta": {"backend": "…", "call_est": 24, "latency_ms": 123.4}
+}
+```
+（完整字段说明见 `GET /api/schema`；语言标注为"档案+问题"混合判定口径，英文档案+中文问题会偏 zh——不影响后端质量）
+
+**curl 示例**：
+```bash
+curl -s localhost:8021/api/match -H 'content-type: application/json' \
+  -d '{"demo":"zh","questions":"core"}' | python -m json.tool
+```
+
 ## 4. 包结构与设计
 
 | 模块 | 职责 | 依赖 |

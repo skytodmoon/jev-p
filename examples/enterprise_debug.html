@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JevP · 企业-产品匹配调试台</title>
+<style>
+  :root { --bd:#dfe3ea; --hl:#2563eb; --ok:#16a34a; --warn:#d97706; --bg:#f7f8fa; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: var(--bg); margin: 0; color: #1f2937; }
+  header { background: #111827; color: #fff; padding: 14px 22px; display:flex;
+           align-items:baseline; gap:12px; flex-wrap:wrap; }
+  header b { font-size: 18px; }
+  header span { color:#9ca3af; font-size:12px; }
+  main { max-width: 1240px; margin: 18px auto; padding: 0 14px; display:grid;
+         grid-template-columns: 380px 1fr; gap: 16px; align-items:start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background:#fff; border:1px solid var(--bd); border-radius:10px;
+          padding:14px; }
+  h3 { margin: 0 0 10px; font-size: 14px; color:#374151; }
+  label { display:block; font-size:12px; color:#4b5563; margin:10px 0 4px; }
+  textarea { width:100%; min-height:150px; font:12px/1.45 Consolas, monospace;
+             border:1px solid var(--bd); border-radius:6px; padding:8px; resize:vertical; }
+  textarea#product { min-height:64px; }
+  select, button { font: inherit; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { border:1px solid var(--bd); background:#fff; padding:6px 12px;
+           border-radius:6px; cursor:pointer; }
+  button.primary { background: var(--hl); color:#fff; border-color:var(--hl); }
+  button.small { padding:3px 8px; font-size:12px; }
+  .btnline { margin:12px 0 4px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--bd); }
+  th { background:#f3f4f6; font-weight:600; white-space:nowrap; }
+  .patched { color:var(--warn); }
+  .badge { display:inline-block; border-radius:4px; padding:1px 7px; font-size:11px; }
+  .b-zh { background:#eef2ff; color:#3730a3; }
+  .b-en { background:#ecfdf5; color:#065f46; }
+  .fire { background:#fef2f2; color:#b91c1c; }
+  .ok { background:#f0fdf4; color:#15803d; }
+  .none { background:#f3f4f6; color:#6b7280; }
+  details { border:1px solid var(--bd); border-radius:6px; padding:6px 10px; margin-top:6px; }
+  summary { cursor:pointer; font-size:12px; color:#374151; }
+  pre { background:#0f172a; color:#e2e8f0; border-radius:6px; padding:10px;
+        font:12px/1.4 Consolas, monospace; max-height:340px; overflow:auto; white-space:pre-wrap; }
+  .err { color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; padding:8px 12px;
+         border-radius:6px; font-size:13px; }
+  .note { font-size:11px; color:#6b7280; margin-top:6px; }
+  .spin { display:inline-block; width:14px; height:14px; border:2px solid #cbd5e1;
+          border-top-color: var(--hl); border-radius:50%; animation:sp 0.8s linear infinite;
+          vertical-align:-2px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <b>JevP · 企业-产品匹配调试台</b>
+  <span>POST /api/match · schema enterprise-match.v1</span>
+</header>
+<main>
+  <div>
+    <div class="card">
+      <h3>① 输入（产品 + 企业）</h3>
+      <label>产品信息（可选，缺省内置 Titan-PHM）</label>
+      <textarea id="product" placeholder='{"name":"...","description":"..."}'></textarea>
+
+      <label>企业档案 JSON 数组（name/basic/bidding/website/supply_chain）</label>
+      <textarea id="companies"
+        placeholder='[{"name":"...","basic":{"industry":"...","scale":"...","location":"..."},"bidding":[],"website":{},"supply_chain":{}}]'></textarea>
+      <div class="btnline row">
+        <button class="small" onclick="loadExample('zh')">加载中文示例</button>
+        <button class="small" onclick="loadExample('en')">加载英文示例</button>
+        <button class="small" onclick="document.getElementById('companies').value='[]'">清空</button>
+      </div>
+
+      <label>问题集 / 校正 / 后端</label>
+      <div class="row">
+        <select id="questions">
+          <option value="core" selected>core · 3 问/家（默认，性价比）</option>
+          <option value="all">all · 6 问/家（精评）</option>
+          <option value="min">min · 1 问/家（极速粗筛）</option>
+        </select>
+        <select id="backend">
+          <option value="auto" selected>auto（VLM_* → 27B，质量优先）</option>
+          <option value="router">router（语言路由：中→27B / 英→判别式）</option>
+          <option value="openai">openai（27B 双语直连）</option>
+          <option value="laya">laya（判别式）</option>
+          <option value="agentjev">agentjev（GPU 服务）</option>
+        </select>
+        <label style="display:inline-flex;align-items:center;gap:4px;margin:0">
+          <input type="checkbox" id="patch" checked> 域先验校正
+        </label>
+      </div>
+
+      <div class="btnline">
+        <button class="primary" onclick="runMatch()">开始匹配</button>
+      </div>
+      <div id="err" class="err" style="display:none"></div>
+    </div>
+  </div>
+
+  <div id="out"></div>
+</main>
+
+<script>
+const BASE = '';
+
+function $(id) { return document.getElementById(id); }
+
+async function loadExample(lang) {
+  $('err').style.display = 'none';
+  try {
+    const r = await fetch(`${BASE}/api/match/example?lang=${lang}`);
+    const d = await r.json();
+    $('companies').value = JSON.stringify(d.companies, null, 1);
+  } catch (e) {
+    showErr(String(e));
+  }
+}
+
+function showErr(msg) {
+  const el = $('err');
+  el.textContent = '请求失败：' + msg;
+  el.style.display = 'block';
+}
+
+async function runMatch() {
+  $('err').style.display = 'none';
+  let companies;
+  try {
+    companies = JSON.parse($('companies').value || '[]');
+  } catch (e) {
+    showErr('企业 JSON 解析失败：' + e.message); return;
+  }
+  let product;
+  try {
+    const p = $('product').value.trim();
+    product = p ? JSON.parse(p) : null;
+  } catch (e) {
+    showErr('产品 JSON 解析失败：' + e.message); return;
+  }
+  const payload = {
+    product, companies,
+    questions: $('questions').value,
+    apply_patch: $('patch').checked,
+    backend: $('backend').value,
+  };
+  const btn = $('startBtn');
+  const out = $('out');
+  out.innerHTML = '<div class="card"><span class="spin"></span> 匹配中（调用 ~'
+    + companies.length + ' 家企业 × ' +
+    ({core:3, all:6, min:1}[$('questions').value]) + ' 问）…</div>';
+  try {
+    const r = await fetch(`${BASE}/api/match`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) { showErr(JSON.stringify(d)); return; }
+    render(d);
+  } catch (e) { showErr(String(e)); }
+}
+
+function render(d) {
+  const rows = d.ranking || [];
+  let html = `<div class="card">
+    <h3>② 排序结果（${rows.length} 家 · 后端 ${d.meta.backend} · ${d.meta.latency_ms}ms · 调用≈${d.meta.call_est}）</h3>
+    <table>
+      <tr><th>#</th><th>企业</th><th>匹配分</th><th>原始分</th><th>置信</th><th>margin</th><th>语言</th><th>建议</th></tr>`;
+  rows.forEach((r, i) => {
+    const score = (r.match_score === null || r.match_score === undefined) ? '—' : r.match_score.toFixed(2);
+    const raw = (r.score_raw === null || r.score_raw === undefined) ? '—' : r.score_raw.toFixed(2);
+    const conf = (r.confidence === null || r.confidence === undefined) ? '—' : r.confidence.toFixed(2);
+    const badge = `<span class="badge ${r.lang === 'en' ? 'b-en' : 'b-zh'}">${r.lang === 'en' ? '英' : '中'}</span>`;
+    const adviceCls = r.advice && r.advice.includes('🔥') ? 'fire' :
+                      (r.advice && r.advice.includes('→') ? 'ok' : 'none');
+    const patchMark = r.patched
+      ? `<span class="patched" title="${(r.patch_note || '')}">←校正</span>`
+      : '';
+    html += `<tr>
+      <td>${i + 1}</td>
+      <td><b>${r.name || '?'}</b> ${badge}</td>
+      <td><b>${score}</b> ${patchMark}</td>
+      <td>${raw}</td><td>${conf}</td><td>${(r.margin || 0).toFixed(3)}</td>
+      <td>${badge}</td><td><span class="badge ${adviceCls}">${r.advice || ''}</span></td>
+    </tr>
+    <tr><td colspan="8"><details><summary>${r.name} — 各维度明细</summary>
+      <pre>${JSON.stringify(r.per_question || {}, null, 1)}</pre>
+      ${r.patch_note ? '<div class="note">校正说明：' + r.patch_note + '</div>' : ''}
+    </details></td></tr>`;
+  });
+  html += `</table></div>
+    <div class="card"><h3>③ 原始 JSON 响应</h3>
+      <pre>${JSON.stringify(d, null, 1)}</pre></div>`;
+  $('out').innerHTML = html;
+}
+</script>
+</body>
+</html>
