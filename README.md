@@ -264,7 +264,7 @@ JEVP_BACKEND=laya JEVP_LAYA_MODEL=multilingual python benchmarks/evaluate.py  # 
 
 [AgentJev](https://github.com/malevrigns/agent-jev)（Apache-2.0，313★）：Qwen3-0.6B 骨干去掉 LM head + 候选头单前向打分，零解码 token、共享前缀缓存、2048 上下文；官方 typed-decisions 自报 **79.25% top-1**（比 Laya +2.25 点、比 Jev +6.5 点）。
 
-**部署（本机实测，CPU；GPU 服务器同流程仅多 `--device cuda:0`）**：
+**部署（本机 CPU + 4×RTX5090 GPU 服务器双实测）**：
 ```bash
 git clone https://github.com/malevrigns/agent-jev.git && cd agent-jev
 pip install -r requirements.txt huggingface_hub safetensors
@@ -281,7 +281,12 @@ python -m jev_service.server --checkpoint agentjev_v1.pt --model-path Qwen/Qwen3
 ```
 验证：`GET /health` 返回 `{status: ready, types: [boolean, choice, score], shared_prefix_compute: true, ...}`。
 
-**业务实测（自带 `run_practical_test.py`，本机 CPU）**：Coding Agent 门控三连全对——拒绝提交（63% 未完成概率）、推荐读失败测试（69.6%，margin 57%）、风险 Level 1；DevOps 事故定级 Level 2 合理。**注：脚本结尾"40–80ms"为硬编码文案，本次 CPU 实测为 4.2–8.4s/决策**（官方 GPU 目标 ~50ms）。
+**业务实测（自带 `run_practical_test.py`）**：Coding Agent 门控三连全对——拒绝提交（63% 未完成概率）、推荐读失败测试（69.6%，margin 57%）、风险 Level 1；DevOps 事故定级 Level 2 合理。延迟：CPU 首次 4–8s/决策；**GPU（RTX 5090）热身后 94–178ms/决策，与官方"40–80ms"文案吻合**（首次决策含模型加载 1.6s）。
+
+**GPU 部署实测（4×RTX 5090，`--device cuda:2`，2026-09-28）**：
+- 三场景准确率与 CPU 完全一致（判别式确定性推理）：mario 0.0 / guardrail 0.833 / ticket 1.0；
+- **每决策延迟 41–53ms**（vs CPU 1.9–5.3s，提速 40–100×，达官方宣称量级）；
+- 环境要点：服务器 HF 直连不通需 `HF_ENDPOINT=https://hf-mirror.com`（否则服务启动卡在 tokenizer 校验的无限重试）；避让被 27B 占用的卡（选显存富余的 `cuda:2`）。
 
 **三场景同题评测（`benchmarks/evaluate_agentjev.py`，与 §3.9/§3.10 同口径）**：
 
@@ -291,9 +296,18 @@ python -m jev_service.server --checkpoint agentjev_v1.pt --model-path Qwen/Qwen3
 | guardrail（英文命令+中文 criteria） | 0.83 | 0.39 | **0.96** |
 | mario（数值化状态+中文 criteria） | **0.0**¹ | 0.25 | **0.75** |
 | 一致性 | 1.0 | 1.0 | 1.0 |
-| 每决策延迟 | CPU 1.9–5.3s / 官方 GPU ~50ms | CPU 0.23–1.0s / 官方 GPU 33ms | 27B 服务 75–106ms |
+| 每决策延迟 | **GPU 41–53ms**（CPU 1.9–5.3s） | GPU 33ms（CPU 0.23–1.0s） | 27B 服务 75–106ms |
 
-¹ **不是评测 bug**：单帧调试显示 AgentJev 对中文 criteria 的马里奥状态返回接近均匀的分布（margin 仅 0.044，run 0.29 / jump 0.24 / crouch 0.25），argmax 随机化——0.6B + typed-decisions 微调的短板是**中文语义与数值化状态**；同样中文 criteria 的 guardrail 因 state 是英文命令（语义强）拿到 0.83。
+¹ **中英 criteria 消融已定位根因（见下）**：中文 criteria 返回近均匀分布（margin≈0.07），argmax 随机化；是**训练语料语言**问题而非评测/状态问题。
+
+**中英 criteria 消融（`benchmarks/ablation_criteria_lang.py`，state 与金标准不变，仅翻译 criteria）**：
+
+| 场景 | 中文 criteria | English criteria | margin(中/英) |
+|---|---|---|---|
+| mario | **0.0** | **0.50–0.75** (GPU 0.5 / CPU 0.75) | 0.071 / 0.079 |
+| guardrail | 0.8333 | 0.8333 | 0.319 / 0.268 |
+
+**根因结论**：mario 中文 → 候选头无判别信号 → 近均匀分布；英文 → argmax 方向正确但仍犹豫（margin 低）。guardrail 中英同为 0.833——因为判别信号在**英文 state（命令）**里，criteria 语言影响小。**结论：约束/微调以英文为主，中文 criteria 的判别能力弱，需中文数据微调或应用层英文化 criteria（JevP 已内置 `LayaBackend`/`AgentJevBackend` 一键切换 + `scenarios` 中英双版）。**
 
 **要点**：
 1. **三个 System One 实现的强项各不相同**：AgentJev 英文/命令判定强（门控实测全对、ticket 1.0）、0.6B 极轻量；Laya 英文强但中文弱；JevP+27B 中英文最均衡；
