@@ -316,6 +316,38 @@ python -m jev_service.server --checkpoint agentjev_v1.pt --model-path Qwen/Qwen3
 
 复现：`AGENTJEV_URL=http://<host>:8149 python benchmarks/evaluate_agentjev.py --repeat 3`。
 
+### 3.12 业务落地：企业-产品匹配评价系统（潜在客户挖掘 → 打分 → 排序）
+
+**业务定义**：输入产品信息，从企业库（基本信息/招投标/官网战略/上下游关系）挖掘潜在客户企业并排序。JevP 承担**批量精排打分**：recall 由外部企业库/招投标检索完成，JevP 对每个候选企业跑一组原子化问题，产出 `match_score` 排序 + `confidence/margin` 把关。
+
+**问题集（每企业 6 问，可裁剪）**：`industry_fit`(noul) / `demand_signal`(noul，招投标与采购窗口) / `budget_scale`(score 0-2) / `strategic_fit`(score 0-2，官网战略) / `urgency`(noul) / `match_score`(score 0-3 综合档位)。
+
+**LLM 调用降频**（本场景核心诉求，`examples/enterprise_match_demo.py --questions`）：
+- `min`：1 问/家（8 次/8家）极速粗筛；`core`：3 问/家（24 次/8家，默认）；`all`：6 问/家（48 次/8家）精评档；
+- 实测 **core 档排序与 all 档 8/8 一致**（调用减半不损排序）；
+- 三级漏斗（README 建议架构）：**L0 规则粗筛（0 LLM）→ L1 core/min 打分 → L2 all 精评仅 Top-N** + 同企业 7 天缓存。
+
+**四方案同步评测（中文企业档案，同一金标准 match_level 0-3，repeat×3）**：
+
+| 方案 | LLM 调用 | 档位命中率 | 排序/置信度信号 | 每问延迟 |
+|---|---|---|---|---|
+| **规则基线 L0**（`rule_baseline_enterprise.py`） | **0 次** | **62.5%** | 排序相关 Pearson 0.95 | ~0ms |
+| **JevP+qwen3.8-27b**（推荐） | 24 次/批（core） | **75%** | conf对 0.82 / conf错 0.55（区分度可用） | 85ms |
+| Laya（判别式） | 0（本地） | 12.5% | conf 0.62/0.58（无区分） | 621ms（CPU） |
+| AgentJev-0.6B（GPU） | 0（本地） | 25% ≈ 随机 | conf 0.46/0.46（无区分） | 48ms |
+
+**结论**：
+1. **中文企业档案必须走 LLM 路线（27B）**：判别式模型（Laya/AgentJev）对中文 criteria 无判别信号，退化到随机档位（与 §3.11 消融闭环一致）；英文转译 criteria 后判别式方可使用；
+2. **规则粗筛（0 LLM）不是弱基线**：62.5% 档位命中 + 0.95 排序相关——作为 L0 漏斗前置可把 27B 精排量降到 Top-N，示例：10,000 家候选 → 规则筛至 ~200 → core 精评 600 次调用（27B ~51s 单批，可异步）→ 置信度阈值产 Top-N 触达名单；
+3. **置信度把关**：27B 在企业场景 conf对/conf错 = 0.82/0.55，配合 `route_advice`（分数×置信联合）避免低分高置信误触达。
+
+复现：
+```bash
+python examples/enterprise_match_demo.py --questions core        # 排序 + 触达建议
+python benchmarks/evaluate.py --backend openai --scenarios enterprise_match --repeat 3   # 27B 指标
+python benchmarks/rule_baseline_enterprise.py                    # L0 规则基线
+```
+
 ## 4. 包结构与设计
 
 | 模块 | 职责 | 依赖 |
