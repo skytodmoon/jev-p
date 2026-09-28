@@ -444,6 +444,17 @@ curl -s localhost:8021/api/match -H 'content-type: application/json' \
   -d '{"demo":"zh","questions":"core"}' | python -m json.tool
 ```
 
+**GPU 服务器部署（已验证，2026-09-28）**：
+- 已部署于 `192.168.1.52:8022`（0.0.0.0 绑定，`setsid` 常驻；`VLM_*` 指向服务器本机 8001 的 27B，`demo=zh` 24 次调用约 1.97s）。服务器本机/局域网内可直连 `http://192.168.1.52:8022/`；
+- 若网关/安全组未放行 8022（本机 TCP 探测不通但 SSH 可达），用仓库自带隧道脚本建本地端口转发，然后访问 `http://127.0.0.1:8021/`：
+```bash
+# 本机（TUNNEL_* 环境变量或 --host/--user/--password）
+set TUNNEL_PASSWORD=***   # Linux/macOS: export TUNNEL_PASSWORD=***
+python scripts/api_tunnel.py --local-port 8021     # -> 127.0.0.1:8021 -> 服务器 8022
+```
+- 长期方案：在网关/安全组放行 `8022/tcp` 后即可各端直连；
+- 说明：`/api/match` 在 PowerShell 下用 curl 直接传 JSON 需注意引号转义（推荐 Python/JSON 工具），API 本身无鉴权（部署对外建议加反向代理鉴权）。
+
 ## 4. 包结构与设计
 
 | 模块 | 职责 | 依赖 |

@@ -5,98 +5,134 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JevP · 企业-产品匹配调试台</title>
 <style>
-  :root { --bd:#dfe3ea; --hl:#2563eb; --ok:#16a34a; --warn:#d97706; --bg:#f7f8fa; }
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-         background: var(--bg); margin: 0; color: #1f2937; }
-  header { background: #111827; color: #fff; padding: 14px 22px; display:flex;
-           align-items:baseline; gap:12px; flex-wrap:wrap; }
-  header b { font-size: 18px; }
-  header span { color:#9ca3af; font-size:12px; }
-  main { max-width: 1240px; margin: 18px auto; padding: 0 14px; display:grid;
-         grid-template-columns: 380px 1fr; gap: 16px; align-items:start; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  .card { background:#fff; border:1px solid var(--bd); border-radius:10px;
-          padding:14px; }
-  h3 { margin: 0 0 10px; font-size: 14px; color:#374151; }
-  label { display:block; font-size:12px; color:#4b5563; margin:10px 0 4px; }
-  textarea { width:100%; min-height:150px; font:12px/1.45 Consolas, monospace;
-             border:1px solid var(--bd); border-radius:6px; padding:8px; resize:vertical; }
-  textarea#product { min-height:64px; }
-  select, button { font: inherit; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  button { border:1px solid var(--bd); background:#fff; padding:6px 12px;
-           border-radius:6px; cursor:pointer; }
-  button.primary { background: var(--hl); color:#fff; border-color:var(--hl); }
-  button.small { padding:3px 8px; font-size:12px; }
-  .btnline { margin:12px 0 4px; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--bd); }
-  th { background:#f3f4f6; font-weight:600; white-space:nowrap; }
-  .patched { color:var(--warn); }
-  .badge { display:inline-block; border-radius:4px; padding:1px 7px; font-size:11px; }
-  .b-zh { background:#eef2ff; color:#3730a3; }
-  .b-en { background:#ecfdf5; color:#065f46; }
-  .fire { background:#fef2f2; color:#b91c1c; }
-  .ok { background:#f0fdf4; color:#15803d; }
-  .none { background:#f3f4f6; color:#6b7280; }
-  details { border:1px solid var(--bd); border-radius:6px; padding:6px 10px; margin-top:6px; }
-  summary { cursor:pointer; font-size:12px; color:#374151; }
-  pre { background:#0f172a; color:#e2e8f0; border-radius:6px; padding:10px;
-        font:12px/1.4 Consolas, monospace; max-height:340px; overflow:auto; white-space:pre-wrap; }
-  .err { color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; padding:8px 12px;
-         border-radius:6px; font-size:13px; }
-  .note { font-size:11px; color:#6b7280; margin-top:6px; }
-  .spin { display:inline-block; width:14px; height:14px; border:2px solid #cbd5e1;
-          border-top-color: var(--hl); border-radius:50%; animation:sp 0.8s linear infinite;
-          vertical-align:-2px; }
-  @keyframes sp { to { transform: rotate(360deg); } }
+  :root {
+    --bg:#0f1420; --panel:#171e2e; --panel2:#1d2740; --line:#2a3550;
+    --text:#e5e9f2; --muted:#8b95ab; --hl:#5b8cff; --hl2:#7aa2ff;
+    --gold:#f5c26b; --green:#37d28b; --amber:#f5a623; --red:#ff6b6b;
+    --mono:"JetBrains Mono",Consolas,"Cascadia Code",monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+         background:radial-gradient(1200px 600px at 20% -10%, #1a2barder 0%, transparent 60%),
+                    linear-gradient(160deg,#0f1420,#0b101a 55%,#0d1220);
+         background-color:var(--bg); color:var(--text); min-height:100vh; }
+  header { padding:20px 28px 14px; display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+           border-bottom:1px solid var(--line); background:rgba(13,19,32,.6); backdrop-filter:blur(6px);
+           position:sticky; top:0; z-index:5; }
+  header .logo { width:26px; height:26px; border-radius:8px; background:linear-gradient(135deg,var(--hl),#3b5bdb);
+                 display:inline-flex; align-items:center; justify-content:center; font-weight:800; color:#fff; font-size:14px;
+                 box-shadow:0 0 18px rgba(91,140,255,.5); vertical-align:-6px; margin-right:6px; }
+  header b { font-size:17px; letter-spacing:.2px; }
+  header .sub { color:var(--muted); font-size:12px; }
+  header .right { margin-left:auto; font-size:11px; color:var(--muted);
+                  background:var(--panel); border:1px solid var(--line); padding:4px 10px; border-radius:20px; }
+  main { max-width:1280px; margin:20px auto 40px; padding:0 20px; display:grid;
+         grid-template-columns:390px 1fr; gap:18px; align-items:start; }
+  @media (max-width:960px){ main{ grid-template-columns:1fr; } }
+  .card { background:linear-gradient(180deg,var(--panel),var(--bg)); border:1px solid var(--line);
+          border-radius:14px; padding:16px 18px; box-shadow:0 6px 24px rgba(0,0,0,.25); }
+  .card h3 { margin:0 0 12px; font-size:13px; color:#c3cdf2; font-weight:600;
+             display:flex; align-items:center; gap:8px; }
+  .card h3 .tag { font-size:10px; color:var(--muted); border:1px solid var(--line);
+                  border-radius:10px; padding:1px 8px; font-weight:400; }
+  label { display:block; font-size:11px; color:var(--muted); margin:12px 0 5px; letter-spacing:.3px; }
+  textarea { width:100%; min-height:150px; background:#0b1019; color:#cfe3ff; border:1px solid var(--line);
+             border-radius:10px; padding:10px; font:12px/1.5 var(--mono); resize:vertical; outline:none; }
+  textarea:focus { border-color:var(--hl); box-shadow:0 0 0 3px rgba(91,140,255,.15); }
+  textarea#product { min-height:56px; }
+  .btnline { display:flex; gap:8px; margin:10px 0 2px; flex-wrap:wrap; }
+  button { font:inherit; border:1px solid var(--line); background:var(--panel2); color:var(--text);
+           padding:7px 13px; border-radius:9px; cursor:pointer; transition:.15s; }
+  button:hover { border-color:var(--hl); color:#fff; }
+  button.small { padding:3px 9px; font-size:11px; border-radius:7px; }
+  button.primary { background:linear-gradient(135deg,var(--hl),#3b5bdb); border:none; color:#fff;
+                   font-weight:600; box-shadow:0 4px 14px rgba(59,91,219,.4); }
+  button.primary:hover { filter:brightness(1.08); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .controls { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 10px;
+              display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  select { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:8px;
+           padding:5px 8px; font-size:12px; }
+  .chk { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--muted); cursor:pointer; }
+  .errmsg { display:none; margin-top:10px; color:#ffb4b4; background:rgba(255,107,107,.1);
+            border:1px solid rgba(255,107,107,.35); padding:9px 12px; border-radius:9px; font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; padding:8px 9px; color:var(--muted); font-weight:600; font-size:11px;
+       letter-spacing:.4px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  td { padding:9px; border-bottom:1px solid rgba(42,53,80,.5); vertical-align:middle; }
+  tr:hover td { background:rgba(91,140,255,.05); }
+  .medal { display:inline-flex; width:22px; height:22px; border-radius:50%; align-items:center;
+           justify-content:center; font-size:11px; font-weight:700; }
+  .m1 { background:linear-gradient(135deg,#f5c26b,#caa13d); color:#3a2c00; }
+  .m2 { background:linear-gradient(135deg,#cdd6e4,#97a3b6); color:#222d3d; }
+  .m3 { background:linear-gradient(135deg,#d8a06b,#a06a35); color:#3d250a; }
+  .mn { background:var(--panel2); color:var(--muted); }
+  .scorecell { font-weight:700; font-variant-numeric:tabular-nums; }
+  .sc-high { color:var(--green); } .sc-mid { color:var(--amber); } .sc-low { color:var(--red); }
+  .badge { display:inline-block; border-radius:6px; padding:2px 8px; font-size:11px; font-weight:600; }
+  .b-zh { background:rgba(91,140,255,.16); color:#9db9ff; }
+  .b-en { background:rgba(55,210,139,.14); color:#6fe0ab; }
+  .adv-fire { background:rgba(255,107,107,.16); color:#ff9d9d; }
+  .adv-ok { background:rgba(55,210,139,.14); color:#6fe0ab; }
+  .adv-wait { background:rgba(245,166,35,.14); color:#ffc877; }
+  .adv-none { background:rgba(139,149,171,.14); color:#a8b2c8; }
+  .patched { color:var(--amber); font-size:11px; margin-left:4px; }
+  details { border:1px solid var(--line); border-radius:9px; margin:4px 0 10px; padding:4px 10px;
+            background:rgba(11,16,25,.5); }
+  summary { cursor:pointer; font-size:11.5px; color:var(--muted); }
+  pre { background:#0a0f18; color:#cfe0ff; border:1px solid var(--line); border-radius:10px; padding:12px;
+        font:11.5px/1.5 var(--mono); max-height:360px; overflow:auto; white-space:pre-wrap; word-break:break-all; }
+  .jstr{color:#9ece6a} .jnum{color:#7aa2ff} .jkey{color:#f5c26b} .jboo{color:#ff7b72} .jnull{color:#8b95ab}
+  .note { font-size:10.5px; color:var(--muted); margin-top:8px; line-height:1.6; }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,.25);
+             border-top-color:#fff; border-radius:50%; animation:sp .7s linear infinite; vertical-align:-2px; margin-right:8px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  .meta-line { color:var(--muted); font-size:11px; margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; }
+  .meta-line b { color:#c3cdf2; font-weight:600; }
+  .section-gap { margin-top:14px; }
 </style>
 </head>
 <body>
 <header>
-  <b>JevP · 企业-产品匹配调试台</b>
-  <span>POST /api/match · schema enterprise-match.v1</span>
+  <span class="logo">J</span><b>JevP · 企业-产品匹配调试台</b>
+  <span class="sub">潜在客户挖掘 · 打分排序 · 双语支持</span>
+  <span class="right">schema · enterprise-match.v1</span>
 </header>
+
 <main>
   <div>
     <div class="card">
-      <h3>① 输入（产品 + 企业）</h3>
-      <label>产品信息（可选，缺省内置 Titan-PHM）</label>
-      <textarea id="product" placeholder='{"name":"...","description":"..."}'></textarea>
-
-      <label>企业档案 JSON 数组（name/basic/bidding/website/supply_chain）</label>
-      <textarea id="companies"
+      <h3>① 输入 <span class="tag">product + companies</span></h3>
+      <label>产品信息（可选，缺省内置 Titan-PHM 预测性维护平台）</label>
+      <textarea id="product" spellcheck="false" placeholder='{"name":"...","description":"..."}'></textarea>
+      <label>企业档案 JSON 数组</label>
+      <textarea id="companies" spellcheck="false"
         placeholder='[{"name":"...","basic":{"industry":"...","scale":"...","location":"..."},"bidding":[],"website":{},"supply_chain":{}}]'></textarea>
-      <div class="btnline row">
-        <button class="small" onclick="loadExample('zh')">加载中文示例</button>
-        <button class="small" onclick="loadExample('en')">加载英文示例</button>
-        <button class="small" onclick="document.getElementById('companies').value='[]'">清空</button>
+      <div class="btnline">
+        <button class="small" onclick="loadExample('zh')">◈ 加载中文示例</button>
+        <button class="small" onclick="loadExample('en')">◈ 加载英文示例</button>
+        <button class="small" onclick="ql('companies','[]')">清空</button>
       </div>
-
-      <label>问题集 / 校正 / 后端</label>
-      <div class="row">
+      <label>参数</label>
+      <div class="controls">
         <select id="questions">
-          <option value="core" selected>core · 3 问/家（默认，性价比）</option>
-          <option value="all">all · 6 问/家（精评）</option>
-          <option value="min">min · 1 问/家（极速粗筛）</option>
+          <option value="core" selected>core · 3问/家</option>
+          <option value="all">all · 6问/家</option>
+          <option value="min">min · 1问/家</option>
         </select>
         <select id="backend">
-          <option value="auto" selected>auto（VLM_* → 27B，质量优先）</option>
-          <option value="router">router（语言路由：中→27B / 英→判别式）</option>
-          <option value="openai">openai（27B 双语直连）</option>
-          <option value="laya">laya（判别式）</option>
-          <option value="agentjev">agentjev（GPU 服务）</option>
+          <option value="auto" selected>auto · 27B(质量优先)</option>
+          <option value="router">router · 语言路由</option>
+          <option value="openai">openai · 27B直连</option>
+          <option value="laya">laya · 判别式</option>
+          <option value="agentjev">agentjev · GPU</option>
         </select>
-        <label style="display:inline-flex;align-items:center;gap:4px;margin:0">
-          <input type="checkbox" id="patch" checked> 域先验校正
-        </label>
+        <label class="chk"><input type="checkbox" id="patch" checked> 域先验校正</label>
       </div>
-
       <div class="btnline">
-        <button class="primary" onclick="runMatch()">开始匹配</button>
+        <button class="primary" id="runBtn" onclick="runMatch()">▶ 开始匹配</button>
       </div>
-      <div id="err" class="err" style="display:none"></div>
+      <div class="errmsg" id="err"></div>
     </div>
   </div>
 
@@ -105,94 +141,105 @@
 
 <script>
 const BASE = '';
-
-function $(id) { return document.getElementById(id); }
+const $ = id => document.getElementById(id);
 
 async function loadExample(lang) {
-  $('err').style.display = 'none';
+  hideErr();
   try {
     const r = await fetch(`${BASE}/api/match/example?lang=${lang}`);
     const d = await r.json();
     $('companies').value = JSON.stringify(d.companies, null, 1);
-  } catch (e) {
-    showErr(String(e));
-  }
+  } catch (e) { showErr(e); }
 }
+function ql(id, v) { $(id).value = v; }
+function hideErr() { $('err').style.display = 'none'; }
+function showErr(e) { const el = $('err'); el.textContent = '请求失败：' + e; el.style.display = 'block'; }
 
-function showErr(msg) {
-  const el = $('err');
-  el.textContent = '请求失败：' + msg;
-  el.style.display = 'block';
+function scoreClass(s) {
+  if (s === null || s === undefined) return 'sc-low';
+  return s >= 2.5 ? 'sc-high' : (s >= 1.5 ? 'sc-mid' : 'sc-low');
+}
+function medalCls(i) { return i === 1 ? 'm1' : (i === 2 ? 'm2' : (i === 3 ? 'm3' : 'mn')); }
+
+function hl(json) { return '<span class="jstr">' + json + '</span>'; }
+function jh(obj) {
+  if (obj === null) return '<span class="jnull">null</span>';
+  const t = typeof obj;
+  if (t === 'string') return '<span class="jstr">"' + obj + '"</span>';
+  if (['number','boolean'].includes(t)) return '<span class="' + (t === 'number' ? 'jnum' : 'jboo') + '">' + obj + '</span>';
+  if (Array.isArray(obj)) return '[' + obj.map(jh).join(', ') + ']';
+  const keys = Object.keys(obj);
+  return '{' + keys.map(k => '<span class="jkey">"' + k + '"</span>: ' + jh(obj[k])).join(', ') + '}';
 }
 
 async function runMatch() {
-  $('err').style.display = 'none';
-  let companies;
-  try {
-    companies = JSON.parse($('companies').value || '[]');
-  } catch (e) {
-    showErr('企业 JSON 解析失败：' + e.message); return;
-  }
-  let product;
-  try {
-    const p = $('product').value.trim();
-    product = p ? JSON.parse(p) : null;
-  } catch (e) {
-    showErr('产品 JSON 解析失败：' + e.message); return;
-  }
-  const payload = {
-    product, companies,
-    questions: $('questions').value,
-    apply_patch: $('patch').checked,
-    backend: $('backend').value,
-  };
-  const btn = $('startBtn');
-  const out = $('out');
-  out.innerHTML = '<div class="card"><span class="spin"></span> 匹配中（调用 ~'
-    + companies.length + ' 家企业 × ' +
-    ({core:3, all:6, min:1}[$('questions').value]) + ' 问）…</div>';
+  hideErr();
+  let companies, product;
+  try { companies = JSON.parse($('companies').value || '[]'); }
+  catch (e) { showErr('企业 JSON 解析失败：' + e.message); return; }
+  try { const p = $('product').value.trim(); product = p ? JSON.parse(p) : null; }
+  catch (e) { showErr('产品 JSON 解析失败：' + e.message); return; }
+  if (!companies.length) { showErr('请先填充企业列表（可点“加载中文/英文示例”）'); return; }
+
+  const qs = $('questions').value;
+  const payload = { product, companies, questions: qs,
+                    apply_patch: $('patch').checked, backend: $('backend').value };
+  const btn = $('runBtn'); btn.disabled = true;
+  $('out').innerHTML = '<div class="card"><span class="spinner"></span>匹配中… 约 '
+    + companies.length + ' 家 × ' + ({core:3, all:6, min:1}[qs]) + ' 问调用</div>';
   try {
     const r = await fetch(`${BASE}/api/match`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload),
     });
     const d = await r.json();
-    if (!r.ok) { showErr(JSON.stringify(d)); return; }
+    if (!r.ok) { showErr(JSON.stringify(d)); $('out').innerHTML = ''; return; }
     render(d);
-  } catch (e) { showErr(String(e)); }
+  } catch (e) { showErr(e); $('out').innerHTML = ''; }
+  finally { btn.disabled = false; }
+}
+
+function advCls(a) {
+  if (a.includes('🔥')) return 'adv-fire';
+  if (a.includes('→')) return 'adv-ok';
+  if (a.includes('◇')) return 'adv-wait';
+  return 'adv-none';
 }
 
 function render(d) {
   const rows = d.ranking || [];
+  const m = d.meta || {};
   let html = `<div class="card">
-    <h3>② 排序结果（${rows.length} 家 · 后端 ${d.meta.backend} · ${d.meta.latency_ms}ms · 调用≈${d.meta.call_est}）</h3>
+    <h3>② 排序结果
+      <span class="tag">${rows.length} 家</span></h3>
+    <div class="meta-line">
+      <span>后端 <b>${m.backend || '-'}</b></span>
+      <span>调用 <b>≈${m.call_est ?? '-'}</b></span>
+      <span>延迟 <b>${m.latency_ms ?? '-'} ms</b></span>
+    </div>
     <table>
-      <tr><th>#</th><th>企业</th><th>匹配分</th><th>原始分</th><th>置信</th><th>margin</th><th>语言</th><th>建议</th></tr>`;
+      <tr><th>#</th><th>企业</th><th>匹配分</th><th>原始</th><th>置信</th><th>margin</th><th>语言</th><th>建议</th></tr>`;
   rows.forEach((r, i) => {
-    const score = (r.match_score === null || r.match_score === undefined) ? '—' : r.match_score.toFixed(2);
-    const raw = (r.score_raw === null || r.score_raw === undefined) ? '—' : r.score_raw.toFixed(2);
-    const conf = (r.confidence === null || r.confidence === undefined) ? '—' : r.confidence.toFixed(2);
-    const badge = `<span class="badge ${r.lang === 'en' ? 'b-en' : 'b-zh'}">${r.lang === 'en' ? '英' : '中'}</span>`;
-    const adviceCls = r.advice && r.advice.includes('🔥') ? 'fire' :
-                      (r.advice && r.advice.includes('→') ? 'ok' : 'none');
-    const patchMark = r.patched
-      ? `<span class="patched" title="${(r.patch_note || '')}">←校正</span>`
-      : '';
+    const s = r.match_score, raw = r.score_raw, c = r.confidence;
+    const badge = `<span class="badge ${r.lang === 'en' ? 'b-en' : 'b-zh'}">${r.lang === 'en' ? 'EN' : 'ZH'}</span>`;
+    const adv = r.advice || '';
+    const patch = r.patched ? `<span class="patched" title="${r.patch_note || ''}">↩${(r.patch_note||'').split('→')[1]||'校正'}</span>` : '';
     html += `<tr>
-      <td>${i + 1}</td>
+      <td><span class="medal ${medalCls(i+1)}">${i+1}</span></td>
       <td><b>${r.name || '?'}</b> ${badge}</td>
-      <td><b>${score}</b> ${patchMark}</td>
-      <td>${raw}</td><td>${conf}</td><td>${(r.margin || 0).toFixed(3)}</td>
-      <td>${badge}</td><td><span class="badge ${adviceCls}">${r.advice || ''}</span></td>
+      <td class="scorecell ${scoreClass(s)}">${s == null ? '—' : s.toFixed(2)} ${patch}</td>
+      <td class="scorecell">${raw == null ? '—' : raw.toFixed(2)}</td>
+      <td>${c == null ? '—' : c.toFixed(2)}</td>
+      <td>${(r.margin ?? 0).toFixed(3)}</td>
+      <td>${badge}</td>
+      <td><span class="badge ${advCls(adv)}">${adv || '—'}</span></td>
     </tr>
-    <tr><td colspan="8"><details><summary>${r.name} — 各维度明细</summary>
-      <pre>${JSON.stringify(r.per_question || {}, null, 1)}</pre>
-      ${r.patch_note ? '<div class="note">校正说明：' + r.patch_note + '</div>' : ''}
-    </details></td></tr>`;
+    <tr><td colspan="8"><details><summary>▸ ${r.name} — 六维明细 ${r.patch_note ? '（' + r.patch_note + '）' : ''}</summary>
+      <pre>${jh(r.per_question || {})}</pre></details></td></tr>`;
   });
   html += `</table></div>
-    <div class="card"><h3>③ 原始 JSON 响应</h3>
-      <pre>${JSON.stringify(d, null, 1)}</pre></div>`;
+    <div class="card section-gap"><h3>③ 原始 JSON 响应 <span class="tag">可复制集成</span></h3>
+      <pre>${jh(d)}</pre></div>`;
   $('out').innerHTML = html;
 }
 </script>
