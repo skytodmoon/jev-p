@@ -346,6 +346,7 @@ python -m jev_service.server --checkpoint agentjev_v1.pt --model-path Qwen/Qwen3
 python examples/enterprise_match_demo.py --questions core        # 排序 + 触达建议
 python benchmarks/evaluate.py --backend openai --scenarios enterprise_match --repeat 3   # 27B 指标
 python benchmarks/rule_baseline_enterprise.py                    # L0 规则基线
+JEVP_BACKEND=router python examples/enterprise_match_demo.py     # 语言感知路由（中文→27B，英文→判别式）
 ```
 
 ## 4. 包结构与设计
@@ -354,7 +355,7 @@ python benchmarks/rule_baseline_enterprise.py                    # L0 规则基�
 |---|---|---|
 | `jevp/protocol.py` | Choice/Score/Noul 数据模型、校验、prompt 构建 | 仅标准库 |
 | `jevp/engine.py` | 约束解码：候选 token 打分、softmax、程序化拼装答案 | 仅标准库（tokenizer 鸭子类型注入） |
-| `jevp/backend.py` | `OllamaBackend`（默认）/ `OpenAICompatibleBackend`（vLLM 局域网）/ `MLXBackend` / `TransformersBackend` / `vLLMBackend`（占位）；`auto_backend()` 自动选择 | HTTP / 惰性导入 |
+| `jevp/backend.py` | `OllamaBackend` / `OpenAICompatibleBackend`（vLLM 局域网）/ `LayaBackend` / `AgentJevBackend`（判别式）/ `MLXBackend` / `TransformersBackend` / `vLLMBackend`（占位）/**`RouterBackend`**（语言感知路由：中文→27B、英文→判别式 + 低置信降级）；`auto_backend()` 自动选择 | HTTP / 惰性导入 |
 | `jevp/calibrator.py` | ECE、温度缩放、置信度路由 | 仅标准库 |
 | `jevp/server.py` | FastAPI `/v1/systemone`、`/healthz` | fastapi + uvicorn |
 | `benchmarks/benchmark.py` | 目标机器延迟/内存基准（默认 **mario 场景**，可选 ticket） | 仅标准库 |

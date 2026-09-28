@@ -153,9 +153,14 @@ class DecisionEngine:
     def decide(self, state: Any, questions: Dict[str, Question]) -> Dict[str, Answer]:
         """并行评估所有问题，返回 {问题名: Answer}。
 
+        路由后端（RouterBackend 等，实现了 ``route_decide``）优先接管；
         判别式后端（Laya 等，``backend.direct=True``）非词表打分，走 direct_decide；
         否则走"构造 prompt -> 一次 batch 前向 -> 候选打分"。
         """
+        route = getattr(self.backend, "route_decide", None)
+        if route is not None:
+            return route(state, questions)
+
         if getattr(self.backend, "direct", False):
             return self.backend.direct_decide(state, questions)
 

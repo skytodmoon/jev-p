@@ -601,6 +601,119 @@ class AgentJevBackend(Backend):
 
 
 # --------------------------------------------------------------------------- #
+# RouterBackend：语言感知路由（P0——吸收 Laya Router 思想，提升中文决策效能）
+# 中文决策 -> zh_backend（默认 27B/OpenAI，中文最强）；英文 -> en_backend（判别式）
+# 附加低置信降级标记：conf 低 / raw_mass 低 -> last_meta['degraded']=True
+# --------------------------------------------------------------------------- #
+_CJK_RE = None  # 惰性编译
+
+
+def _cjk_count(text: str) -> int:
+    global _CJK_RE
+    if _CJK_RE is None:
+        import re
+        _CJK_RE = re.compile("[\u3006\u3007\u3400-\u4dbf\u4e00-\u9fff]")
+    return len(_CJK_RE.findall(text))
+
+
+def _lang_blob(state: Any, questions: "Dict[str, Any]") -> str:
+    parts = [state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)]
+    for q in questions.values():
+        raw = q.to_dict()
+        parts.append(raw.get("instructions", ""))
+        c = raw.get("criteria")
+        if isinstance(c, dict):
+            parts.extend(c.values())
+        elif isinstance(c, list):
+            parts.extend(c)
+    return " ".join(parts)
+
+
+def is_chinese_like(state: Any, questions: "Dict[str, Any]", threshold: float = 0.2) -> bool:
+    """按 state+questions 文本中 CJK 字符占比判定是否中文决策。"""
+    blob = _lang_blob(state, questions)
+    nonspace = [ch for ch in blob if not ch.isspace()]
+    if not nonspace:
+        return False
+    return _cjk_count(blob) / len(nonspace) >= threshold
+
+
+def _answer_confidence(ans: "Any") -> float:
+    p = ans.payload
+    if p.get("confidence") is not None:
+        return float(p["confidence"])
+    if "noul" in p:
+        return max(float(p["noul"]), 1.0 - float(p["noul"]))
+    return 0.0
+
+
+def _default_router_backends() -> tuple:
+    """默认：zh=openai(27B, 需 VLM_*)；en=JEVP_ROUTER_EN 指定（默认 laya，可无）。"""
+    try:
+        zh = auto_backend(backend="openai")
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "RouterBackend 需要中文后端：请配置 VLM_MODEL_NAME/VLM_BASE_URL/VLM_API_KEY"
+            f"（或显式传入 zh_backend）。原始错误: {exc}"
+        ) from exc
+    en = None
+    en_kind = os.environ.get("JEVP_ROUTER_EN", "laya")
+    try:
+        en = auto_backend(backend=en_kind)
+    except Exception:  # noqa: BLE001  # 无英文判别式后端时回退 zh
+        en = None
+    return zh, en
+
+
+class RouterBackend:
+    """语言感知路由后端（engine.decide 检测到 route_decide 即自动接管）。
+
+    用法：
+        JEVP_BACKEND=router python examples/enterprise_match_demo.py
+        或 router = RouterBackend(zh_backend=..., en_backend=...) 注入（测试/自定义）。
+    路由结果与降级标记见 ``router.last_meta``：
+        {"lang": "zh|en", "backend": ..., "low_confidence_keys": [...], "degraded": bool}
+    """
+
+    def __init__(self, zh_backend: Optional[Any] = None, en_backend: Optional[Any] = None,
+                 low_conf: float = 0.5, low_mass: float = 0.2):
+        if zh_backend is None:
+            zh_backend, en_backend = _default_router_backends()
+        self.zh_backend = zh_backend
+        self.en_backend = en_backend
+        self.low_conf = low_conf
+        self.low_mass = low_mass
+        self.model_id = (f"router(zh={zh_backend.model_id}, "
+                         f"en={getattr(en_backend, 'model_id', None) or 'none'})")
+        self.last_meta: Dict[str, Any] = {}
+
+    def _run(self, backend: Any, state: Any, questions: "Dict[str, Any]") -> "Dict[str, Any]":
+        from .engine import DecisionEngine  # 延迟导入避免环
+
+        return DecisionEngine(backend=backend,
+                              tokenizer=getattr(backend, "tokenizer", None)).decide(state, questions)
+
+    def route_decide(self, state: Any, questions: "Dict[str, Any]") -> "Dict[str, Any]":
+        lang = "zh" if is_chinese_like(state, questions) else "en"
+        backend = self.zh_backend if lang == "zh" else (self.en_backend or self.zh_backend)
+        answers = self._run(backend, state, questions)
+
+        low = []
+        for k, ans in answers.items():
+            conf = _answer_confidence(ans)
+            mass = ans.payload.get("raw_mass")
+            if conf < self.low_conf or (mass is not None and mass < self.low_mass):
+                low.append(k)
+        self.last_meta = {
+            "lang": lang,
+            "backend": getattr(backend, "model_id", type(backend).__name__),
+            "low_confidence_keys": low,
+            "degraded": bool(low),
+        }
+        return answers
+
+
+# --------------------------------------------------------------------------- #
 # 自动选择
 # --------------------------------------------------------------------------- #
 def _laya_env_device() -> str:
@@ -640,6 +753,10 @@ def auto_backend(
     if backend == "agentjev":
         # AgentJev-0.6B 判别式后端（端点 AGENTJEV_URL，服务需已启动）
         return AgentJevBackend()
+
+    if backend == "router":
+        # 语言感知路由：中文 -> openai(27B)，英文 -> 判别式（默认 laya，可 JEVP_ROUTER_EN 换）
+        return RouterBackend()
 
     if backend == "openai":
         cfg = _resolve_openai_config(model)
