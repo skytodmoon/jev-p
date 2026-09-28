@@ -105,13 +105,13 @@
       <h3>① 输入 <span class="tag">product + companies</span></h3>
       <label>产品信息（可选，缺省内置 Titan-PHM 预测性维护平台）</label>
       <textarea id="product" spellcheck="false" placeholder='{"name":"...","description":"..."}'></textarea>
-      <label>企业档案 JSON 数组</label>
-      <textarea id="companies" spellcheck="false"
-        placeholder='[{"name":"...","basic":{"industry":"...","scale":"...","location":"..."},"bidding":[],"website":{},"supply_chain":{}}]'></textarea>
+      <label>企业档案 JSON 数组（默认预填完整模板，改值即可；可点"添加模板企业"拼多家）</label>
+      <textarea id="companies" spellcheck="false"></textarea>
       <div class="btnline">
-        <button class="small" onclick="loadExample('zh')">◈ 加载中文示例</button>
-        <button class="small" onclick="loadExample('en')">◈ 加载英文示例</button>
-        <button class="small" onclick="ql('companies','[]')">清空</button>
+        <button class="small" onclick="loadExample('zh')">◈ 加载中文示例(8家)</button>
+        <button class="small" onclick="loadExample('en')">◈ 加载英文示例(6家)</button>
+        <button class="small" onclick="addTemplateCompany()">＋ 添加模板企业</button>
+        <button class="small" onclick="resetToTemplate()">↺ 恢复默认模板</button>
       </div>
       <label>参数</label>
       <div class="controls">
@@ -142,6 +142,46 @@
 <script>
 const BASE = '';
 const $ = id => document.getElementById(id);
+
+// 内置兜底模板（服务端 /api/match/template 优先，取到后替换；离线场景用此）
+const BOOT_TEMPLATE = {
+  company: {
+    name: "示例企业（改这里）",
+    basic: { industry: "机械制造", scale: "中型", location: "苏州", employees: "500", since: 2010 },
+    bidding: [{ year: 2026, title: "设备预测性维护系统招标", amount: 80 }],
+    website: { strategy: "智能制造与设备全生命周期管理", news: "新产线投产" },
+    supply_chain: { customers: "汽车零部件制造商", suppliers: "数控机床厂商", leverage: "设备密集，可作渠道切入" }
+  },
+  product: {
+    name: "Titan-PHM 工业装备预测性维护平台",
+    description: "面向制造业的设备健康管理 SaaS：AI 故障预测、维修工单联动；目标为重视停机成本的企业。"
+  }
+};
+let TEMPLATE = BOOT_TEMPLATE;
+
+window.addEventListener('DOMContentLoaded', init);
+function init() {
+  // 从服务端取权威模板；失败用内置兜底
+  fetch(`${BASE}/api/match/template`).then(r => r.json()).then(d => {
+    if (d && d.company) { TEMPLATE = d; if (!$('companies').value) pref(); if (!$('product').value) $('product').value = JSON.stringify(d.product || BOOT_TEMPLATE.product, null, 1); }
+  }).catch(() => {});
+  if (!$('companies').value) pref();
+  if (!$('product').value) $('product').value = JSON.stringify(BOOT_TEMPLATE.product, null, 1);
+}
+function pref() { $('companies').value = JSON.stringify([TEMPLATE.company || BOOT_TEMPLATE.company], null, 1); }
+function resetToTemplate() {
+  pref();
+  $('product').value = JSON.stringify(TEMPLATE.product || BOOT_TEMPLATE.product, null, 1);
+}
+function addTemplateCompany() {
+  let arr;
+  try { arr = JSON.parse($('companies').value || '[]'); }
+  catch (e) { showErr('当前企业 JSON 不合法，无法追加模板：' + e.message); return; }
+  if (!Array.isArray(arr)) arr = [];
+  arr.push(JSON.parse(JSON.stringify(TEMPLATE.company || BOOT_TEMPLATE.company)));
+  $('companies').value = JSON.stringify(arr, null, 1);
+  hideErr();
+}
 
 async function loadExample(lang) {
   hideErr();

@@ -82,6 +82,22 @@ def route_advice(score: float | None, conf: float) -> str:
     return "✋ 暂不触达（记录线索）"
 
 
+PRODUCT_TEMPLATE = {
+    "name": "示例产品（例如：工业预测性维护平台）",
+    "description": "一句话描述产品面向的行业、解决的痛点与目标客户特征",
+}
+
+COMPANY_TEMPLATE = {
+    "name": "示例企业（双击修改名称）",
+    "basic": {"industry": "机械制造", "scale": "中型", "location": "苏州",
+              "employees": "500", "since": 2010},
+    "bidding": [{"year": 2026, "title": "设备预测性维护系统招标", "amount": 80}],
+    "website": {"strategy": "智能制造与设备全生命周期管理", "news": "新产线投产"},
+    "supply_chain": {"customers": "汽车零部件制造商", "suppliers": "数控机床厂商",
+                     "leverage": "设备密集、停机成本高，可作渠道切入"},
+}
+
+
 class MatchRequest(BaseModel):
     product: Optional[Dict[str, Any]] = None
     companies: Optional[List[Dict[str, Any]]] = None
@@ -205,6 +221,12 @@ def api_schema() -> dict:
         "examples": ["POST /api/match  demo=zh", "POST /api/match  demo=en",
                      "POST /api/match/one"],
     }
+
+
+@app.get("/api/match/template")
+def match_template() -> dict:
+    """输入默认模板（调试台自动预填，减少手写）：单企业 + 产品，字段齐全可直接改值。"""
+    return {"product": PRODUCT_TEMPLATE, "company": COMPANY_TEMPLATE}
 
 
 @app.get("/api/match/example")
