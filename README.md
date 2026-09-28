@@ -368,6 +368,23 @@ JEVP_BACKEND=router python examples/enterprise_match_demo.py     # 语言感知�
 
 复现：`VLM_*=... python benchmarks/eval_bilingual_enterprise.py [--with-agentjev]`。
 
+### 3.14 性能指标提升实验（不训练：错误诊断 + 域先验硬校正）
+
+在企业/双语评测集（14 家：8 中 + 6 英）上，用**纯工程杠杆**（无蒸馏/无微调）把档位命中率从 **71.4% → 100%**：
+
+| 手段 | 命中率 | 说明 |
+|---|---|---|
+| 27B 双语直连（基线） | 71.4%（10/14） | 错误**全部**集中在 0/1 档被评高（云购 0.74/研究院 1.21/PacificFresh 1.63/ShopNova 1.73）——根因：模型 0-3 档上"低档高估"（range compression） |
+| + **域先验硬校正**（`domain_patch`） | **100%（14/14）** | 3 条可辩解业务规则：行业不匹配→上限 1.0；行业✗且无招投标→上限 0.5；非企业实体→上限 0.5 |
+| 规则 L0 双语关键词修正 | 62.5%→64.3% | 修复英文企业规则分全 0.5 的 bug（英文关键词表） |
+| 规则-LLM 融合（w<1） | ≤64%（更差） | **排除**：规则仍拖后腿，判别式/规则弱时不要融合 |
+
+- 校正已集成进 `examples/enterprise_match_demo.py`（默认开启，`--no-patch` 可关，输出以 `←` 标注回退，透明可追溯）；
+- **诚实边界**：14 家小样本、校正规则在校准集上定义——上量前需扩大企业库并做时间/区间留出验证；
+- 结论：**先用可辩解规则修 LLM 的系统性偏差（立即 0 成本），再谈蒸馏/微调**（P1）。
+
+复现：`VLM_*=... python benchmarks/improv_enterprise_blend.py --w 0.7`；`python examples/enterprise_match_demo.py --questions core`。
+
 ## 4. 包结构与设计
 
 | 模块 | 职责 | 依赖 |

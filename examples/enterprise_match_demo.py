@@ -41,6 +41,7 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(encoding="utf-8", errors="replace")
 
 from scenarios.enterprise_match import PRODUCT, describe, frames, build_questions  # noqa: E402
+from rule_baseline_enterprise import domain_patch, is_non_commercial  # noqa: E402
 from jevp.backend import auto_backend  # noqa: E402
 from jevp.engine import DecisionEngine  # noqa: E402
 
@@ -69,6 +70,8 @@ def main() -> None:
     ap.add_argument("--questions", choices=list(_QUESTION_SETS), default="core",
                     help="问题集：all=6问/core=3问(默认)/min=1问 —— 决定 LLM 调用次数")
     ap.add_argument("--backend", default=os.environ.get("JEVP_BACKEND", "auto"))
+    ap.add_argument("--no-patch", action="store_true",
+                    help="关闭域先验硬校正（默认开启：行业不匹配→≤1、无关→≤0.5、非企业→≤0.5）")
     args = ap.parse_args()
 
     backend = auto_backend(model=os.environ.get("JEVP_MODEL"), backend=args.backend)
@@ -99,19 +102,31 @@ def main() -> None:
             margin = (vals[0] - vals[1]) if len(vals) > 1 else vals[0]
         rows.append({
             "name": ent["name"], "desc": describe(ent, idx),
-            "score": score, "confidence": conf, "margin": margin,
+            "score": score, "score_raw": score, "confidence": conf, "margin": margin,
             "industry_fit": flat["industry_fit"].get("noul") if "industry_fit" in flat else None,
             "demand_signal": flat["demand_signal"].get("noul") if "demand_signal" in flat else None,
             "urgency": flat["urgency"].get("noul") if "urgency" in flat else None,
+            "n_bids": len(ent.get("bidding", [])),
+            "non_commercial": is_non_commercial(ent),
         })
+
+    if not args.no_patch:
+        for r in rows:
+            r["score"] = domain_patch(r["score"], r)
 
     rows.sort(key=lambda r: (r["score"] or -1, r["confidence"] or 0), reverse=True)
 
-    print(f"{'排名':<4}{'企业':<18}{'匹配分':>7}{'置信度':>8}{'margin':>8}  建议")
+    patched = not args.no_patch
+    print(f"{'排名':<4}{'企业':<18}{'匹配分':>7}{'确认度':>8}{'margin':>8}  建议")
     print("-" * 66)
     for i, r in enumerate(rows, 1):
-        print(f"{i:<4}{r['name']:<18}{r['score']:>7.2f}{(r['confidence'] or 0):>8.3f}"
+        score_txt = f"{r['score']:>7.2f}"
+        if patched and abs((r['score'] or 0) - (r['score_raw'] or 0)) > 1e-9:
+            score_txt = f"{r['score']:>5.2f}⬅{r['score_raw']:.2f}"
+        print(f"{i:<4}{r['name']:<18}{score_txt}{(r['confidence'] or 0):>8.3f}"
               f"{r['margin']:>8.3f}  {route_advice(r['score'], r['confidence'] or 0)}")
+    if patched:
+        print("\n* 匹配分为域先验校正后（← 表示经校正回退；--no-patch 查看原始分）")
 
     print("\n== Top3 明细 ==")
     for r in rows[:3]:

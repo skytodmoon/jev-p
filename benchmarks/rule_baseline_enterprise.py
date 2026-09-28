@@ -31,9 +31,15 @@ for _s in (sys.stdout, sys.stderr):
 
 from scenarios.enterprise_match import frames, expected  # noqa: E402
 
-INDUSTRY_KW = ("制造", "钢铁", "化工", "能源", "电池", "建材", "汽车", "机械", "材料", "冶炼")
-BID_KW = ("监测", "维护", "健康", "智能", "数字化", "预测", "联网", "系统")
-STRAT_KW = ("智能", "数字化", "全生命周期", "灯塔", "智造", "本质安全")
+INDUSTRY_KW = ("制造", "钢铁", "化工", "能源", "电池", "建材", "汽车", "机械", "材料", "冶炼",
+               "steel", "chemical", "energy", "battery", "auto", "manufactur",
+               "machine", "material", "mining", "utility", "power", "food processing")
+BID_KW = ("监测", "维护", "健康", "智能", "数字化", "预测", "联网", "系统",
+          "monitor", "predict", "maintenance", "digital", "smart", "health",
+          "condition", "analytics", "retrofit", "automation", "platform", "tooling")
+STRAT_KW = ("智能", "数字化", "全生命周期", "灯塔", "智造", "本质安全",
+            "digital", "smart", "lifecycle", "industry 4.0", "reliability",
+            "asset", "analytics", "O&M")
 
 
 def rule_score(f) -> float:
@@ -66,6 +72,30 @@ def pearson(xs, ys):
     dx = sum((x - mx) ** 2 for x in xs) ** 0.5
     dy = sum((y - my) ** 2 for y in ys) ** 0.5
     return num / (dx * dy) if dx and dy else None
+
+
+def domain_patch(llm_score, r) -> float:
+    """域先验硬校正（可辩解业务规则，非调参过拟合；小样本注意留出验证）：
+    - 行业不匹配(industry_fit 为 False) → 上限 1.0（低档封顶）；
+    - 行业✗ 且 无任何招投标 → 上限 0.5（无关企业）；
+    - 非企业实体（高校/科研院所） → 上限 0.5（非商业客户）。
+    r 需含: industry_fit(bool), n_bids(int), non_commercial(bool)。
+    """
+    s = float(llm_score)
+    if not r["industry_fit"]:
+        s = min(s, 1.0)
+        if r.get("n_bids", 1) == 0:
+            s = min(s, 0.5)
+    if r.get("non_commercial"):
+        s = min(s, 0.5)
+    return s
+
+
+def is_non_commercial(frame) -> bool:
+    scale = str(frame["basic"].get("scale", ""))
+    industry = str(frame["basic"].get("industry", ""))
+    return ("非企业" in scale or "高校" in scale
+            or "research" in industry.lower() or "institute" in industry.lower())
 
 
 def main() -> None:
