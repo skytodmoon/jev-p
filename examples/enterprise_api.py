@@ -175,7 +175,10 @@ def _score_one(engine, ent: Dict[str, Any], questions, apply_patch: bool) -> Dic
     return {
         "name": ent.get("name", "?"),
         "lang": lang,
-        "match_score": (round(score, 4) if score is not None else None),
+        "match_score": (round(score, 4) if score is not None else None),   # 0-3 主分（排序键）
+        "level": (int(round(score)) if score is not None else None),       # 档位 0-3
+        "score_pct": (round(round(score, 4) / 3 * 100)
+                      if score is not None else None),                     # 百分位 0-100（仅展示）
         "score_raw": (round(score_raw, 4) if score_raw is not None else None),
         "patched": patched,
         "patch_note": patch_note,
@@ -210,9 +213,11 @@ def api_schema() -> dict:
             "demo": "bool", "product": "object", "questions_used": ["str"],
             "ranking": [{
                 "name": "str", "lang": '"zh"|"en"',
-                "match_score": "校正后匹配分 0-3（小数，可排序）",
+                "match_score": "主分 0-3 连续小数（排序键；Score 原语 4 档：0无关/1低/2中/3高）",
+                "level": "档位 0-3（round(match_score)）",
+                "score_pct": "百分位 0-100（= match_score/3*100，仅展示/汇报用）",
                 "score_raw": "原始分（未校正）", "patched": "bool 是否经校正",
-                "patch_note": "str 校正原因", "confidence": "0-1 边际置信",
+                "patch_note": "str 校正原因", "confidence": "0-1 边际置信（未校准概率，需阈值自动化先做温度缩放）",
                 "margin": "top1-top2 差值", "advice": "🔥/→/◇/✋ 触达建议",
                 "per_question": "{question: 各维度答案对象}",
             }],

@@ -258,7 +258,7 @@ function render(d) {
       <span>延迟 <b>${m.latency_ms ?? '-'} ms</b></span>
     </div>
     <table>
-      <tr><th>#</th><th>企业</th><th>匹配分</th><th>原始</th><th>置信</th><th>margin</th><th>语言</th><th>建议</th></tr>`;
+      <tr><th>#</th><th>企业</th><th>匹配分</th><th>百分</th><th>原始</th><th>置信</th><th>margin</th><th>语言</th><th>建议</th></tr>`;
   rows.forEach((r, i) => {
     const s = r.match_score, raw = r.score_raw, c = r.confidence;
     const badge = `<span class="badge ${r.lang === 'en' ? 'b-en' : 'b-zh'}">${r.lang === 'en' ? 'EN' : 'ZH'}</span>`;
@@ -268,6 +268,7 @@ function render(d) {
       <td><span class="medal ${medalCls(i+1)}">${i+1}</span></td>
       <td><b>${r.name || '?'}</b> ${badge}</td>
       <td class="scorecell ${scoreClass(s)}">${s == null ? '—' : s.toFixed(2)} ${patch}</td>
+      <td>${r.score_pct == null ? '—' : r.score_pct + '%'}</td>
       <td class="scorecell">${raw == null ? '—' : raw.toFixed(2)}</td>
       <td>${c == null ? '—' : c.toFixed(2)}</td>
       <td>${(r.margin ?? 0).toFixed(3)}</td>
