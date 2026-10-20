@@ -387,6 +387,11 @@ JEVP_BACKEND=router python examples/enterprise_match_demo.py     # 语言感知�
 
 ### 3.15 服务 API 与调试台（明确输入/输出结构）
 
+当前 API 为 **v2**：产品进入评分上下文，支持跨企业批处理、有界 HTTP 并发、版本化缓存、
+混合召回与精评、异步作业和分页结果。10 万家场景的用法与边界见
+[企业匹配性能说明](docs/MATCHING_PERFORMANCE.md)，测试数据见
+[离线规模报告](docs/MATCHING_BENCHMARK.md)。下方旧部署实测属于历史版本。
+
 **启动**（需 VLM_* 环境变量指向 27B 服务）：
 ```bash
 python examples/enterprise_api.py          # 端口 8021（JEVP_API_PORT 可改）
@@ -397,6 +402,10 @@ python examples/enterprise_api.py          # 端口 8021（JEVP_API_PORT 可改�
 |---|---|
 | `GET /` | 网页调试台（中/英示例加载、参数、排序表、逐企业明细、原始 JSON） |
 | `POST /api/match` | 批量企业匹配打分 + 排序（核心） |
+| `POST /api/companies/index` | 预处理并复用企业索引 |
+| `POST /api/match/jobs` | 提交异步评分任务 |
+| `GET /api/match/jobs/{job_id}` | 查询状态和进度 |
+| `GET /api/match/jobs/{job_id}/results` | 分页读取任务结果 |
 | `POST /api/match/one` | 单企业快查（`{"name":..., "basic":{...}, ...}` 直接 POST） |
 | `GET /api/match/example?lang=zh\|en` | 返回内置示例企业列表（调试台填充用） |
 | `GET /api/schema` | 输入/输出结构契约（机器可读） |
@@ -414,7 +423,8 @@ python examples/enterprise_api.py          # 端口 8021（JEVP_API_PORT 可改�
        "website": {"strategy": "官网战略关键词", "news": "动态"},
        "supply_chain": {"customers": "客户", "suppliers": "供应商", "leverage": "渠道杠杆"}}],
   "demo":       "zh" | "en" | null,                    // 快捷加载内置中/英示例
-  "questions":  "core" | "all" | "min",                // 3/6/1 问每家
+  "questions":  "core" | "all" | "min",                // 3/6/1 问；min 开启校正时为2问
+  "mode":       "full" | "topk",                        // 默认 full；topk 默认精评500家、返回100家
   "apply_patch": true,                                  // 域先验硬校正（默认开）
   "backend":    "auto"(VLM_*→27B) | "router" | "openai" | "laya" | "agentjev"
 }
@@ -423,7 +433,7 @@ python examples/enterprise_api.py          # 端口 8021（JEVP_API_PORT 可改�
 **输出结构**：
 ```json
 {
-  "schema": "enterprise-match.v1", "demo": false,
+  "schema": "enterprise-match.v2", "demo": false,
   "product": {...}, "questions_used": ["industry_fit", ...],
   "ranking": [
       {"name": "企业名", "lang": "zh|en",
@@ -436,7 +446,7 @@ python examples/enterprise_api.py          # 端口 8021（JEVP_API_PORT 可改�
   "meta": {"backend": "…", "call_est": 24, "latency_ms": 123.4}
 }
 ```
-（完整字段说明见 `GET /api/schema`；语言标注为"档案+问题"混合判定口径，英文档案+中文问题会偏 zh——不影响后端质量）
+（完整参数说明见 `GET /api/schema` 和性能文档；语言展示按企业档案判断，后端语言路由仍考虑完整推理上下文。）
 
 **curl 示例**：
 ```bash

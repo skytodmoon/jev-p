@@ -17,11 +17,13 @@ dependencies = [
     "torch>=2.0",
     "transformers>=4.40",
     "fastapi>=0.110",
+    "pydantic>=2.9",
     "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27"]
+retrieval = ["numpy>=1.26"]
 # Apple Silicon 上的默认推理后端（Mac mini 4 基线）
 mlx = ["mlx-lm>=0.16"]
 

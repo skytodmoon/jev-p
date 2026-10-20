@@ -22,6 +22,7 @@ runs/
 results/
 *.log
 .env
+.cache/
 
 # IDE
 .idea/

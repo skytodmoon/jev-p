@@ -96,7 +96,7 @@
 <header>
   <span class="logo">J</span><b>JevP · 企业-产品匹配调试台</b>
   <span class="sub">潜在客户挖掘 · 打分排序 · 双语支持</span>
-  <span class="right">schema · enterprise-match.v1</span>
+  <span class="right">schema · enterprise-match.v2</span>
 </header>
 
 <main>
@@ -118,7 +118,7 @@
         <select id="questions">
           <option value="core" selected>core · 3问/家</option>
           <option value="all">all · 6问/家</option>
-          <option value="min">min · 1问/家</option>
+          <option value="min">min · 1问/家（开启校正时2问）</option>
         </select>
         <select id="backend">
           <option value="auto" selected>auto · 27B(质量优先)</option>
@@ -126,6 +126,10 @@
           <option value="openai">openai · 27B直连</option>
           <option value="laya">laya · 判别式</option>
           <option value="agentjev">agentjev · GPU</option>
+        </select>
+        <select id="mode">
+          <option value="full" selected>全量评分</option>
+          <option value="topk">筛选500家，返回前100家</option>
         </select>
         <label class="chk"><input type="checkbox" id="patch" checked> 域先验校正</label>
       </div>
@@ -223,10 +227,13 @@ async function runMatch() {
 
   const qs = $('questions').value;
   const payload = { product, companies, questions: qs,
+                    mode: $('mode').value,
                     apply_patch: $('patch').checked, backend: $('backend').value };
   const btn = $('runBtn'); btn.disabled = true;
   $('out').innerHTML = '<div class="card"><span class="spinner"></span>匹配中… 约 '
-    + companies.length + ' 家 × ' + ({core:3, all:6, min:1}[qs]) + ' 问调用</div>';
+    + (payload.mode === 'topk' ? Math.min(500, companies.length) : companies.length)
+    + ' 家 × ' + (qs === 'min' && payload.apply_patch ? 2 : {core:3, all:6, min:1}[qs])
+    + ' 题（缓存可减少实际评估量）</div>';
   try {
     const r = await fetch(`${BASE}/api/match`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -254,7 +261,10 @@ function render(d) {
       <span class="tag">${rows.length} 家</span></h3>
     <div class="meta-line">
       <span>后端 <b>${m.backend || '-'}</b></span>
-      <span>调用 <b>≈${m.call_est ?? '-'}</b></span>
+      <span>新评估题数 <b>${m.call_est ?? '-'}</b></span>
+      <span>评分覆盖 <b>${m.candidate_count ?? '-'} / ${m.total_companies ?? '-'}</b></span>
+      <span>缓存命中 <b>${m.cache_hits ?? 0}</b></span>
+      <span>失败 <b>${m.failed_companies ?? 0}</b></span>
       <span>延迟 <b>${m.latency_ms ?? '-'} ms</b></span>
     </div>
     <table>
