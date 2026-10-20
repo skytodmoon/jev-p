@@ -393,6 +393,8 @@ JEVP_BACKEND=router python examples/enterprise_match_demo.py     # 语言感知�
 [离线规模报告](docs/MATCHING_BENCHMARK.md)。下方旧部署实测属于历史版本。
 关于这些分数能否体现真实商业价值，以及下一轮的证据、校准和供应链迭代路线，见
 [企业潜在价值技术评估](docs/ENTERPRISE_VALUE_TECHNICAL_ASSESSMENT.md)。
+面向数据工程师的字段、来源、事件追踪、证据与验收要求，见
+[企业关键信息采集规范](docs/ENTERPRISE_DATA_COLLECTION_SPEC.md)。
 
 **启动**（需 VLM_* 环境变量指向 27B 服务）：
 ```bash
