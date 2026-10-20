@@ -391,6 +391,8 @@ JEVP_BACKEND=router python examples/enterprise_match_demo.py     # 语言感知�
 混合召回与精评、异步作业和分页结果。10 万家场景的用法与边界见
 [企业匹配性能说明](docs/MATCHING_PERFORMANCE.md)，测试数据见
 [离线规模报告](docs/MATCHING_BENCHMARK.md)。下方旧部署实测属于历史版本。
+关于这些分数能否体现真实商业价值，以及下一轮的证据、校准和供应链迭代路线，见
+[企业潜在价值技术评估](docs/ENTERPRISE_VALUE_TECHNICAL_ASSESSMENT.md)。
 
 **启动**（需 VLM_* 环境变量指向 27B 服务）：
 ```bash
