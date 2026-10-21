@@ -21,6 +21,8 @@ import os
 import platform
 import urllib.error
 import urllib.request
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Sequence
 
 # 默认测试基线：7B
@@ -53,6 +55,39 @@ class Backend:
 
     def direct_decide(self, state: Any, questions: "Dict[str, Any]") -> "Dict[str, Any]":
         raise NotImplementedError("该后端不是判别式后端，不支持直接判定")
+
+
+class _ConcurrentHTTPBackend(Backend):
+    """A per-backend semaphore bounds HTTP concurrency across simultaneous jobs."""
+
+    def _init_concurrency(self, max_concurrency: Optional[int]) -> None:
+        self.max_concurrency = int(max_concurrency if max_concurrency is not None
+                                   else os.environ.get("JEVP_HTTP_CONCURRENCY", "8"))
+        if not 1 <= self.max_concurrency <= 128:
+            raise ValueError("max_concurrency must be 1..128")
+        self._request_gate = threading.BoundedSemaphore(self.max_concurrency)
+
+    def batch_last_logits_safe(self, prompts: Sequence[str]) -> List[Any]:
+        def run(prompt):
+            try:
+                with self._request_gate:
+                    row = self._top_logprobs(prompt)
+                    if not row:
+                        raise RuntimeError("backend returned no scoring logprobs")
+                    return row
+            except Exception as exc:
+                return exc
+        if not prompts:
+            return []
+        with ThreadPoolExecutor(max_workers=min(self.max_concurrency, len(prompts))) as pool:
+            return list(pool.map(run, prompts))
+
+    def batch_last_logits(self, prompts: Sequence[str]) -> List[Any]:
+        rows = self.batch_last_logits_safe(prompts)
+        for row in rows:
+            if isinstance(row, Exception):
+                raise row
+        return rows
 
 
 # --------------------------------------------------------------------------- #
@@ -93,7 +128,7 @@ class OllamaTokenizer:
         return {"input_ids": [int(t) for t in resp.get("tokens", [])]}
 
 
-class OllamaBackend(Backend):
+class OllamaBackend(_ConcurrentHTTPBackend):
     """Ollama 后端：OpenAI 兼容 /v1/chat/completions + logprobs。
 
     只取 top-k logprob（不生成文本），候选打分在 engine 内按 token 字符串完成。
@@ -110,8 +145,10 @@ class OllamaBackend(Backend):
         num_ctx: int = 2048,
         top_logprobs: int = 16,
         timeout: float = 60.0,
+        max_concurrency: Optional[int] = None,
     ):
         self.model = model
+        self._init_concurrency(max_concurrency)
         self.base_url = base_url
         self.num_ctx = num_ctx
         self.top_logprobs = top_logprobs
@@ -133,12 +170,6 @@ class OllamaBackend(Backend):
             raise RuntimeError(
                 f"Ollama 未安装模型 {self.model!r}，请先执行: ollama pull {self.model}"
             )
-
-    def batch_last_logits(self, prompts: Sequence[str]) -> List[Dict[str, float]]:
-        rows: List[Dict[str, float]] = []
-        for p in prompts:
-            rows.append(self._top_logprobs(p) or {})
-        return rows
 
     def _top_logprobs(self, prompt: str) -> Dict[str, float]:
         body = {
@@ -188,7 +219,9 @@ class MLXBackend(Backend):
 
         rows: List[List[float]] = []
         for p in prompts:
-            ids = self.tokenizer.encode(p)[: self.max_length]
+            ids = self.tokenizer.encode(p)
+            if len(ids) > self.max_length:
+                raise ValueError("prompt exceeds MLX max_length; shorten the profile")
             x = mx.array([ids])
             out = self.model(x)
             if isinstance(out, tuple):
@@ -246,9 +279,10 @@ class TransformersBackend(Backend):
             list(prompts),
             return_tensors="pt",
             padding=True,
-            truncation=True,
-            max_length=self.max_length,
+            truncation=False,
         ).to(self.device)
+        if int(enc["attention_mask"].sum(dim=1).max()) > self.max_length:
+            raise ValueError("prompt exceeds Transformers max_length; shorten the profile")
         with torch.no_grad():
             out = self.model(**enc)
         last_idx = enc["attention_mask"].sum(dim=1) - 1
@@ -320,7 +354,7 @@ def _resolve_openai_config(model_arg: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
-class OpenAICompatibleBackend(Backend):
+class OpenAICompatibleBackend(_ConcurrentHTTPBackend):
     """OpenAI 兼容服务后端（vLLM 等）：/v1/chat/completions + top-level logprobs。
 
     - 只取 top-k logprob（max_tokens=1，不生成文本），engine 按 token 字符串打分；
@@ -342,8 +376,10 @@ class OpenAICompatibleBackend(Backend):
         top_logprobs: int = 20,
         chat_template_kwargs: Optional[Dict[str, Any]] = None,
         timeout: float = 120.0,
+        max_concurrency: Optional[int] = None,
     ):
         self.model = model
+        self._init_concurrency(max_concurrency)
         self.base_url = _ensure_v1(base_url)
         self.api_key = api_key
         self.top_logprobs = top_logprobs
@@ -366,12 +402,6 @@ class OpenAICompatibleBackend(Backend):
                 continue
         return _EstimateTokenizer()
 
-    def batch_last_logits(self, prompts: Sequence[str]) -> List[Dict[str, float]]:
-        rows: List[Dict[str, float]] = []
-        for p in prompts:
-            rows.append(self._top_logprobs(p) or {})
-        return rows
-
     def _top_logprobs(self, prompt: str) -> Dict[str, float]:
         body: Dict[str, Any] = {
             "model": self.model,
@@ -382,7 +412,10 @@ class OpenAICompatibleBackend(Backend):
             "chat_template_kwargs": self.chat_template_kwargs,
         }
         resp = self._post_chat(body)
-        return _parse_openai_logprobs(resp)
+        row = _parse_openai_logprobs(resp)
+        if not row:
+            raise RuntimeError("backend returned no scoring logprobs")
+        return row
 
     def _post_chat(self, body: Dict[str, Any]) -> Any:
         import urllib.request
@@ -394,7 +427,7 @@ class OpenAICompatibleBackend(Backend):
         if self.api_key:
             req.add_header("Authorization", f"Bearer {self.api_key}")
         try:
-            with urllib.request.urlopen(req, timeout=120.0) as resp:
+            with urllib.request.urlopen(req, timeout=self._client.timeout) as resp:
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:500]
@@ -711,6 +744,24 @@ class RouterBackend:
             "degraded": bool(low),
         }
         return answers
+
+    def route_decide_many(self, states, questions, **limits):
+        """Group by language so HTTP and local backends can batch across states."""
+        from .engine import DecisionEngine
+
+        results = [None] * len(states)
+        groups = {"zh": [], "en": []}
+        for idx, state in enumerate(states):
+            groups["zh" if is_chinese_like(state, questions) else "en"].append(idx)
+        for lang, indices in groups.items():
+            if not indices:
+                continue
+            backend = self.zh_backend if lang == "zh" else (self.en_backend or self.zh_backend)
+            engine = DecisionEngine(backend, getattr(backend, "tokenizer", None))
+            answers = engine.decide_many([states[i] for i in indices], questions, **limits)
+            for idx, answer in zip(indices, answers):
+                results[idx] = answer
+        return results
 
 
 # --------------------------------------------------------------------------- #

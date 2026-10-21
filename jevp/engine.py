@@ -184,6 +184,88 @@ class DecisionEngine:
             total += len(self.tokenizer(p, add_special_tokens=False)["input_ids"])
         return total
 
+    def decide_many(
+        self, states: Sequence[Any], questions: Dict[str, Question], *,
+        batch_size: int = 32, max_batch_chars: int = 64000,
+    ) -> List[Any]:
+        """Bounded cross-state batches, in input order; failures stay with their state.
+
+        batch_size bounds *prompts*, not companies. The character budget bounds
+        materialized input, not tokenizer tokens or GPU memory. A single oversized
+        prompt is rejected instead of silently losing its question to truncation.
+        Direct backends retain their existing serial semantics unless they provide
+        a native route_decide_many hook.
+        """
+        if not 1 <= batch_size <= 512 or max_batch_chars < 1:
+            raise ValueError("batch_size must be 1..512; max_batch_chars must be positive")
+        if not questions:
+            raise ValueError("questions cannot be empty")
+        route = getattr(self.backend, "route_decide_many", None)
+        if route is not None:
+            return route(states, questions, batch_size=batch_size,
+                         max_batch_chars=max_batch_chars)
+        if getattr(self.backend, "direct", False) or hasattr(self.backend, "route_decide"):
+            results = []
+            for state in states:
+                try:
+                    results.append(self.decide(state, questions))
+                except Exception as exc:
+                    results.append(exc)
+            return results
+
+        results: List[Any] = [{} for _ in states]
+        pending: List[Tuple[int, str, str]] = []
+        chars = 0
+
+        def flush() -> None:
+            if not pending:
+                return
+            prompts = [p for _, _, p in pending]
+            try:
+                fn = getattr(self.backend, "batch_last_logits_safe",
+                             self.backend.batch_last_logits)
+                rows = fn(prompts)
+                if len(rows) != len(pending):
+                    raise RuntimeError(f"backend returned {len(rows)} rows, expected {len(pending)}")
+            except Exception as exc:
+                rows = [exc] * len(pending)
+            for (idx, name, _), row in zip(pending, rows):
+                if isinstance(results[idx], Exception):
+                    continue
+                try:
+                    if isinstance(row, Exception):
+                        raise row
+                    results[idx][name] = self._answer_one(questions[name], row)
+                except Exception as exc:
+                    results[idx] = exc
+            pending.clear()
+
+        for idx, state in enumerate(states):
+            for name, question in questions.items():
+                if isinstance(results[idx], Exception):
+                    break
+                try:
+                    prompt = build_prompt(state, name, question)
+                    if len(prompt) > max_batch_chars:
+                        raise ValueError("single prompt exceeds max_batch_chars; shorten the profile")
+                    context_limit = getattr(self.backend, "max_length", None)
+                    if context_limit and self.tokenizer is not None and getattr(
+                        self.backend, "candidate_scoring", "token_id"
+                    ) == "token_id":
+                        count = len(self.tokenizer(prompt, add_special_tokens=True)["input_ids"])
+                        if count > context_limit:
+                            raise ValueError("prompt exceeds backend token context; shorten the profile")
+                except Exception as exc:
+                    results[idx] = exc
+                    break
+                if pending and (len(pending) >= batch_size or chars + len(prompt) > max_batch_chars):
+                    flush()
+                    chars = 0
+                pending.append((idx, name, prompt))
+                chars += len(prompt)
+        flush()
+        return results
+
     # -- private ----------------------------------------------------------- #
     def _score(self, texts: Sequence[str], logits_row: Any):
         if getattr(self.backend, "candidate_scoring", "token_id") == "token_string":
